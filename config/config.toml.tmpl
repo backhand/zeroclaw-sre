@@ -135,7 +135,12 @@ enabled = ${ZC_SLACK_ENABLED}
 channel_ids = [${SLACK_CHANNEL_IDS_TOML}]
 mention_only = true
 thread_replies = true
-stream_drafts = true
+# Draft streaming posts a placeholder ("Organizing…") and edits it as tokens
+# arrive. When a turn ends by posting a *new* message instead — which is what
+# happens after a tool-heavy investigation — the placeholder is never finalised
+# and sits there looking like the agent is still thinking. Off until upstream
+# reconciles the two paths. NOTES.md §20.
+stream_drafts = false
 
 # Discord over its outbound gateway.
 [channels.discord.ops]

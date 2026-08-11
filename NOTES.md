@@ -604,6 +604,60 @@ rollout history matters.
 
 ---
 
+## 20. Slack draft streaming leaves an orphaned placeholder
+
+`stream_drafts = true` posts a placeholder and edits it via `chat.update` as
+tokens arrive. After a tool-heavy turn the reply is delivered as a *new*
+message, and the placeholder is never finalised — so "Organizing…" sits under a
+completed answer indefinitely, looking like the agent is still working.
+
+Disabled. The cost is that long answers appear all at once instead of
+streaming, which for an SRE digest is no loss.
+
+---
+
+## 21. Whether the executor should be an in-cluster MCP server
+
+Raised by the operator, recorded because it is the right shape for a v2 and the
+reasoning should not be lost.
+
+Today the write path is: model → `shell` → `kubectl`. The constraint that a
+patch touches only the `resources` block lives in SKILL.md prose and a SOP step
+— the weakest layer available, because it is instructions to a model. RBAC can
+express "may patch deployments"; it cannot express "may patch only
+`.spec.template.spec.containers[*].resources`".
+
+A typed executor can. `patch_resources(workload, requests, limits)` validates
+its own arguments and cannot express the thing you did not authorise. That is
+strictly stronger than an allowlist of binaries, and `prune-rs.sh` and
+`repo-map.sh` are already this pattern in miniature — scripts that own a
+decision instead of letting the model improvise one.
+
+The larger prize is credential custody. `GH_TOKEN` currently sits in the agent's
+environment, so the agent can do anything the token can — which is why
+`git_forge` and `gh` were interchangeable and why gating one of them was
+theatre. An executor holding the token and exposing only `file_issue` and
+`comment_issue` removes that reach entirely. Same for the write RBAC: give it to
+the executor and the agent's own ServiceAccount drops to read-only, restoring
+the property §19 gave up.
+
+Where it does not help, and should not be oversold:
+
+- it does not remove the need for RBAC, it relocates it — a compromised
+  executor patches just as effectively, and now it is the component that must
+  be correct;
+- approvals still have to reach a human where that human already is. A web UI
+  is a second place to look, which on-call usually makes worse, not better;
+- diagnosis is the bulk of the work and wants open-ended composition. Replacing
+  raw `kubectl` reads with typed tools trades away the ability to answer a
+  question nobody anticipated.
+
+So the shape worth building is a hybrid, not a rewrite: keep read-only kubectl
+for diagnosis, move every *mutation* behind the executor, and move the tokens
+with them.
+
+---
+
 ## 10. Open questions for the operator
 
 1. **kubectl skew.** Pinned to `v1.36.3` to match current stable k3s
