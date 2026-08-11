@@ -528,6 +528,41 @@ finished last, which would have pinned the Slack image into
 
 ---
 
+## 18. `supervised` alone makes the agent unusable in chat
+
+Out of the box every tool that is not in `auto_approve` prompts. In a Slack
+channel that means a button for each `kubectl get`, each 👀 acknowledgement
+reaction, each `sop_list` — several approvals before the agent has read
+anything. Clicking *Always* does not settle it either: the prompts keep coming,
+so the only durable answer is the config list.
+
+The inconsistency is the giveaway. The scheduled sweep already runs the same
+shell commands unattended on the cron path, where no human is present to
+approve. Gating them only when someone happens to be in the conversation
+protects nothing and costs everything.
+
+`auto_approve` therefore covers cluster reads (`shell`), the agent's own
+bookkeeping, procedure control, and talking to humans. `always_ask` keeps
+`file_write` and `file_edit`.
+
+`shell` is the consequential entry, so what still constrains it, explicitly:
+
+- `allowed_commands` is a strict allowlist — anything unlisted is refused;
+- RBAC has no destructive verb anywhere and no access to secrets;
+- the only writable namespaces are the ones with an explicit RoleBinding;
+- every mutating SOP step carries `requires_confirmation`, so rightsizing
+  still cannot patch without an operator approving in chat.
+
+The residue: a sufficiently manipulated agent could `kubectl patch` a resources
+block inside `ALLOWED_NAMESPACES` without a per-command approval, because the
+gate now sits at the SOP step rather than the tool call. That is the layered
+model the spec describes — RBAC authoritative, SOP gates on mutations — and it
+is a deliberate trade, not an oversight. Remove `"shell"` from `auto_approve`
+for the stricter posture; the agent then asks before each command, which is
+safe, noisy, and slow.
+
+---
+
 ## 10. Open questions for the operator
 
 1. **kubectl skew.** Pinned to `v1.36.3` to match current stable k3s

@@ -57,11 +57,38 @@ shell_env_passthrough = [
   "KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT",
   "GH_TOKEN", "GH_REPO", "ALLOWED_NAMESPACES", "SWEEP_STATE_DIR",
 ]
-# Reads run unattended; every mutation is gated by the SOP step instead.
+# What runs without asking.
+#
+# The premise of this distribution is a sweep that investigates on a schedule
+# with nobody watching — so cluster *reads* have to run unattended, and they
+# already do on the cron path. Gating the same reads only when a human happens
+# to be in the conversation is inconsistent and makes the agent unusable in
+# chat: every `kubectl get`, every emoji acknowledgement, every SOP lookup
+# becomes a button to click.
+#
+# `shell` is in this list, which is the consequential entry. What still stops
+# it doing damage:
+#   - allowed_commands above is a strict allowlist;
+#   - RBAC has no destructive verb and no access to secrets (deploy/rbac.yaml);
+#   - the only writable namespaces are ALLOWED_NAMESPACES, bound explicitly;
+#   - every mutating SOP step carries requires_confirmation, so rightsizing
+#     still cannot patch anything without an operator approving in chat.
+#
+# If you want the stricter posture, remove "shell" here: the agent then asks
+# before each command, which is safe, noisy, and slow. NOTES.md §18.
 auto_approve = [
+  # cluster inspection
+  "shell",
+  # its own bookkeeping
   "file_read", "memory_recall", "memory_store", "glob_search", "content_search",
-  "tool_search", "sop_status", "sop_advance",
+  "tool_search",
+  # procedure control — the SOP's own gates are the real check
+  "sop_status", "sop_advance", "sop_list", "sop_execute",
+  # talking to humans, which is the entire point
+  "send_via", "ask_user", "escalate_to_human", "reaction", "poll",
 ]
+# Writing files in the workspace is never part of the job; if the model wants
+# to, a human should see why.
 always_ask = ["file_write", "file_edit"]
 sandbox_backend = "${ZC_SANDBOX_BACKEND}"
 
