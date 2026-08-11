@@ -1,0 +1,37 @@
+diff --git a/crates/zeroclaw-channels/src/slack.rs b/crates/zeroclaw-channels/src/slack.rs
+index 2b7b5af..ebbc862 100644
+--- a/crates/zeroclaw-channels/src/slack.rs
++++ b/crates/zeroclaw-channels/src/slack.rs
+@@ -5237,10 +5237,21 @@ impl Channel for SlackChannel {
+             .await
+             .insert(token.clone(), tx);
+ 
++        // Post the prompt into the thread the request is being handled in, when
++        // there is one. Without this every approval lands in the channel root,
++        // detached from the question that caused it — which buries the channel
++        // and leaves the approver no context for what they are approving.
++        // `active_assistant_thread` is already maintained for the status bar.
++        let approval_thread_ts: Option<String> = self
++            .active_assistant_thread
++            .lock()
++            .ok()
++            .and_then(|m| m.get(recipient).cloned());
++
+         // Socket Mode: send interactive Block Kit buttons.
+         // Polling mode: send plain text with token-echo instructions.
+         let send_result = if self.app_token.is_some() {
+-            let body = serde_json::json!({
++            let mut body = serde_json::json!({
+                 "channel": recipient,
+                 "text": format!("APPROVAL REQUIRED [{token}]\nTool: {}\nArgs: {}", request.tool_name, request.arguments_summary),
+                 "blocks": [{
+@@ -5258,6 +5269,9 @@ impl Channel for SlackChannel {
+                     ]
+                 }]
+             });
++            if let Some(ref ts) = approval_thread_ts {
++                body["thread_ts"] = serde_json::json!(ts);
++            }
+             self.http_client()
+                 .post("https://slack.com/api/chat.postMessage")
+                 .bearer_auth(&self.bot_token)

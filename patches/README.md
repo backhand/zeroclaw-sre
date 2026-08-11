@@ -13,6 +13,10 @@ Every patch here should also be an upstream pull request. Delete it once merged.
 | Patch | What it does | Why |
 |---|---|---|
 | `0001-slack-resolve-approval-prompt.patch` | After an approval button is clicked, rewrite the prompt with `chat.update` and `blocks: []` | Upstream delivers the decision and leaves the message untouched, so an answered request looks identical to an unanswered one and invites a second click |
+| `0002-slack-thread-approval-prompt.patch` | Post the approval prompt into the thread the request is being handled in | Upstream posts it to the channel root, so approvals pile up detached from the question that caused them — burying the channel and leaving the approver no context |
+
+Patches are applied in filename order and each is written against the result of
+the previous one. Regenerate them in the same order.
 
 ## Refreshing a patch after a version bump
 
