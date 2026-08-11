@@ -200,29 +200,56 @@ jobs:
       - name: Smoke-test the published image
         shell: bash
         run: |
-          set -euo pipefail
+          # Deliberately not `set -e`: each check reports which assertion failed
+          # and what the command actually printed. A smoke test that exits 1
+          # with no output is worse than no smoke test.
+          set -uo pipefail
           tag="${{ needs.plan.outputs.tag }}"
           if [ "${{ matrix.variant }}" = "slack" ]; then tag="${tag}-slack"; fi
           ref="${{ env.IMAGE }}:${tag}"
+          rc=0
 
-          docker run --rm --entrypoint /usr/local/bin/zeroclaw "$ref" --version
-          docker run --rm --entrypoint /usr/local/bin/kubectl  "$ref" version --client=true >/dev/null
+          check() {   # check <description> <command...>
+            local desc="$1"; shift
+            local out
+            if out="$("$@" 2>&1)"; then
+              echo "ok    $desc"
+            else
+              echo "::error::$desc failed (exit $?)"
+              echo "$out" | sed 's/^/      /'
+              rc=1
+            fi
+          }
+
+          check "zeroclaw runs"  docker run --rm --entrypoint /usr/local/bin/zeroclaw "$ref" --version
+          check "kubectl runs"   docker run --rm --entrypoint /usr/local/bin/kubectl  "$ref" version --client=true
+          check "gh runs"        docker run --rm --entrypoint /usr/local/bin/gh       "$ref" --version
 
           # The slack variant exists solely to have the Slack channel compiled
           # in. Prove it, or the build was pointless.
           if [ "${{ matrix.variant }}" = "slack" ]; then
-            mkdir -p /tmp/zc
+            # ZeroClaw creates data/ and shared/ under its config dir, and the
+            # image runs as uid 65534 — which cannot write a bind mount owned by
+            # the runner user. World-writable is fine for a throwaway directory.
+            rm -rf /tmp/zc && mkdir -p /tmp/zc && chmod 0777 /tmp/zc
             printf 'schema_version = 3\n[channels.slack.ops]\nenabled = true\nbot_token = "x"\n' > /tmp/zc/config.toml
+            chmod 0666 /tmp/zc/config.toml
+
             out="$(docker run --rm -v /tmp/zc:/cfg -e ZEROCLAW_CONFIG_DIR=/cfg \
                      --entrypoint /usr/local/bin/zeroclaw "$ref" channel list 2>&1)"
-            echo "$out"
+            echo "$out" | sed 's/^/      /'
             if grep -q "Slack (configured, not compiled)" <<<"$out"; then
               echo "::error::the slack variant does NOT have channel-slack compiled in"
-              exit 1
+              rc=1
+            elif grep -qE "✅ Slack" <<<"$out"; then
+              echo "ok    slack channel is compiled in"
+            else
+              echo "::error::channel list did not report Slack at all"
+              rc=1
             fi
-            grep -qE "✅ Slack|Slack" <<<"$out" || { echo "::error::no Slack channel reported"; exit 1; }
-            echo "slack channel is compiled in"
           fi
+
+          exit "$rc"
 
   # ── Pin the digest so deploys are immutable ──────────────────────
   pin:
