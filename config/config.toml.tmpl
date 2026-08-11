@@ -113,6 +113,11 @@ sandbox_backend = "${ZC_SANDBOX_BACKEND}"
 # ── Runtime profile ──────────────────────────────────────────────
 [runtime_profiles.sre]
 agentic = true
+# A single investigation runs many reads — enumerate, describe, events, logs,
+# owner, rollout — and a sweep does that per finding. The default cap stops the
+# agent mid-answer with "further tool calls are rejected", which reads like a
+# bug and loses the work in progress.
+max_actions_per_hour = 400
 max_tool_iterations = 40
 max_tool_result_chars = 12000
 shell_timeout_secs = 60
@@ -129,6 +134,14 @@ deferred_loading = false
 name = "k8s"
 transport = "stdio"
 command = "/usr/local/bin/mcp-executor"
+
+# Declaring a server is not the same as granting it. An agent receives only the
+# servers named by its `mcp_bundles`; omission is not a grant. Without this
+# block the executor is configured, spawnable, and completely invisible to the
+# agent — which is exactly how it failed the first time.
+[mcp_bundles.executor]
+servers = ["k8s"]
+exclude = []
 
 # ── Skills ───────────────────────────────────────────────────────
 # Absolute on purpose: a relative bundle directory resolves against the install
@@ -150,6 +163,7 @@ risk_profile = "sre"
 runtime_profile = "sre"
 channels = [${ZC_AGENT_CHANNELS_TOML}]
 skill_bundles = ["k3s"]
+mcp_bundles = ["executor"]
 cron_jobs = ["sweep", "rightsize", "heartbeat"]
 
 [agents.sre.workspace]
