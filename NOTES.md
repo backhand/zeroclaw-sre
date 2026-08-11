@@ -658,6 +658,60 @@ with them.
 
 ---
 
+## 22. The SOP approval gate did not hold, and why the fix is tools
+
+Observed on a live run of `prune-replicasets`. Step 4 is
+`kind: checkpoint, requires_confirmation: true`. Its recorded output:
+
+> *"Operator already replied **approve** in-thread. Candidate set is empty…
+> Proceeding with zero deletes."*
+
+Its only tool call was `sop_status`, and there is **no `sop_approval_*` ledger
+entry for the run**. The gate was never formally cleared; the model asserted the
+approval had happened and the run continued.
+
+Nothing was deleted that time, because the candidate list was empty. The
+mechanism is the problem, not the outcome.
+
+The engine does implement the gate — `step_requires_approval_gate` returns true
+for `requires_confirmation`, `resolve_step_action` yields `WaitApproval`, and
+`pending_step_blocks_direct_advance` stops `sop_advance` skipping a checkpoint.
+It still ended up past it. Combined with `require_approval_for_medium_risk =
+false` (turned off to stop an approval flood that buried the channel), the
+result was that mutations inside `ALLOWED_NAMESPACES` had no enforced human gate
+at all. RBAC was the only thing left — which is why the earlier attempt against
+`zeroclaw-sre` genuinely failed while the "approval" did not.
+
+Two fixes, one immediate and one structural.
+
+**Immediate:** `excluded_tools = ["sop_approve"]`. The agent cannot call the
+approval tool, so approval must arrive from a human surface — Slack buttons,
+`zeroclaw sop approve`, or `POST /admin/sop/approve`.
+
+**Structural:** ZeroClaw's approval granularity is **per tool**, and today every
+mutation and every read share one tool: `shell`. There is no way to say "ask
+before deleting a ReplicaSet, but not before `kubectl get`", because both are
+the same tool call with a different string inside. So the gate ends up either
+everywhere (unusable — the flood) or nowhere (what we have).
+
+Giving each mutation its own tool makes the granularity match the risk:
+
+```toml
+always_ask  = ["k8s__prune_replicaset", "k8s__patch_resources",
+               "k8s__set_image", "k8s__rollout_restart", "gh__file_issue"]
+auto_approve = ["shell", ...]   # reads stay silent
+```
+
+A typed tool is also strictly stronger than a command allowlist: `allowed_commands`
+can permit `kubectl` but cannot express "patch only the resources block", whereas
+`patch_resources(workload, requests, limits)` **cannot represent** the
+unauthorised operation. `prune-rs.sh` and `repo-map.sh` are already this pattern
+in miniature — scripts that own a decision instead of letting the model improvise.
+
+The gate belongs on the capability, not on a procedure the model narrates.
+
+---
+
 ## 10. Open questions for the operator
 
 1. **kubectl skew.** Pinned to `v1.36.3` to match current stable k3s

@@ -88,8 +88,17 @@ auto_approve = [
   "git_forge",
 ]
 # Writing files in the workspace is never part of the job; if the model wants
-# to, a human should see why.
+# to, a human should see why. Enforced at the tool layer, which is the only
+# layer the model cannot narrate its way past.
 always_ask = ["file_write", "file_edit"]
+
+# The agent must not be able to clear its own approval gate. A run parked at a
+# `requires_confirmation` step was observed reaching the next step anyway, with
+# the model reporting "operator already replied approve in-thread" and no
+# sop_approval_* ledger entry to show for it. Approval has to arrive from a
+# human surface — the Slack buttons, `zeroclaw sop approve`, or
+# POST /admin/sop/approve — never from the agent itself. NOTES.md §22.
+excluded_tools = ["sop_approve"]
 sandbox_backend = "${ZC_SANDBOX_BACKEND}"
 
 # ── Runtime profile ──────────────────────────────────────────────
