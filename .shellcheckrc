@@ -1,3 +1,5 @@
-# Shell scripts here source siblings at runtime paths shellcheck cannot follow
-# statically, and every helper is invoked from a case script or a trap.
-disable=SC1091,SC2329
+# Scripts here source siblings at runtime paths shellcheck cannot resolve
+# statically, and several functions are reached only through a trap or from a
+# case script that sources the library — both read as "unreachable" to the
+# static checker.
+disable=SC1091,SC2317,SC2329
