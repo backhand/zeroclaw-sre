@@ -1,29 +1,105 @@
 name: release
 
-# Spec §10.3: build and push the multi-arch image on a version tag, then pin
-# its digest into deploy/deployment.yaml so what is deployed is exactly what
-# was tested — a tag alone is mutable, a digest is not.
+# Build and publish the image, then pin its digest into deploy/deployment.yaml
+# so what gets deployed is exactly what was built — a tag is mutable, a digest
+# is not (spec §10.3).
+#
+# Every architecture builds on a runner of that architecture. The obvious
+# alternative — one runner plus QEMU — is what this replaces: emulated amd64
+# on an arm64 laptop turns the `slack` variant's Rust build into a coffee
+# break, and emulated arm64 in CI is no better. Each arch builds natively and
+# a manifest list is assembled from the results.
+#
+# Two variants:
+#   default  the published ZeroClaw binary. Minutes.
+#   slack    ZeroClaw rebuilt from source with channel-slack compiled in,
+#            because no published image has it (NOTES.md §14). Slow the first
+#            time; the layer cache makes later builds cheap as long as
+#            ZC_VERSION is unchanged.
 
 on:
   push:
     tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version to build (e.g. v0.1.0)'
+      tag:
+        description: 'Image tag to publish (e.g. v0.1.0, or "test" for a scratch build)'
         required: true
+        default: test
+      variants:
+        description: 'Which variants to build'
+        required: true
+        default: both
+        type: choice
+        options: [both, default, slack]
+      pin_digest:
+        description: 'Commit the resulting digest into deploy/deployment.yaml'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write     # to push the digest-pin commit
   packages: write     # to push to ghcr.io
 
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
 jobs:
-  release:
+  # ── Decide what we are building ──────────────────────────────────
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.p.outputs.tag }}
+      matrix: ${{ steps.p.outputs.matrix }}
+      pin: ${{ steps.p.outputs.pin }}
+    steps:
+      - id: p
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # A tag push is a real release: build everything and pin the digest.
+          # A manual run does what it was asked to.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            variants=both; pin=true
+          else
+            variants="${{ github.event.inputs.variants }}"
+            pin="${{ github.event.inputs.pin_digest }}"
+          fi
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+
+          case "$variants" in
+            both)    v='["default","slack"]' ;;
+            default) v='["default"]' ;;
+            slack)   v='["slack"]' ;;
+            *) echo "unknown variants: $variants" >&2; exit 1 ;;
+          esac
+          echo "matrix={\"variant\":$v}" >> "$GITHUB_OUTPUT"
+          echo "building $variants as '$tag' (pin=$pin)"
+
+  # ── One native build per (variant, architecture) ─────────────────
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.plan.outputs.matrix).variant }}
+        platform: [linux/amd64, linux/arm64]
+    # ubuntu-24.04-arm is GitHub's native arm64 runner, free on public repos.
+    # If you make this repo private and lack arm64 minutes, drop arm64 from the
+    # matrix rather than falling back to QEMU — an emulated Rust build of the
+    # slack variant is measured in hours.
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -32,34 +108,155 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve version
-        id: v
-        run: |
-          version="${{ inputs.version || github.ref_name }}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            ZC_SLACK=${{ matrix.variant == 'slack' && '1' || '0' }}
+          # Push untagged, keyed by digest. The merge job assembles the tags,
+          # so a half-finished matrix never publishes a usable tag.
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}-${{ matrix.platform }}
+          provenance: false
 
-      # k3s runs on ARM as often as on x86; both architectures are first class.
-      - name: Build and push linux/amd64 + linux/arm64
+      - name: Record the digest
+        shell: bash
         run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --tag ghcr.io/${{ github.repository }}:${{ steps.v.outputs.version }} \
-            --tag ghcr.io/${{ github.repository }}:latest \
-            --push .
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          # Filename cannot contain "/" or ":".
+          touch "/tmp/digests/${{ matrix.variant }}-$(echo '${{ steps.build.outputs.digest }}' | sed 's|sha256:||')"
 
-      - name: Pin the digest into deploy/deployment.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.variant }}-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  # ── Assemble one manifest list per variant ───────────────────────
+  merge:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        variant: ${{ fromJSON(needs.plan.outputs.matrix).variant }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.variant }}-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the manifest list
+        id: merge
+        shell: bash
         run: |
-          ref="ghcr.io/${{ github.repository }}:${{ steps.v.outputs.version }}"
+          set -euo pipefail
+          tag="${{ needs.plan.outputs.tag }}"
+          # The slack variant gets its own tag; it is a different binary.
+          if [ "${{ matrix.variant }}" = "slack" ]; then tag="${tag}-slack"; fi
+
+          refs=()
+          for f in /tmp/digests/*; do
+            refs+=("${{ env.IMAGE }}@sha256:$(basename "$f" | sed 's|^${{ matrix.variant }}-||')")
+          done
+          echo "assembling ${#refs[@]} manifests into $tag"
+
+          docker buildx imagetools create -t "${{ env.IMAGE }}:${tag}" "${refs[@]}"
+
+          digest="$(docker buildx imagetools inspect "${{ env.IMAGE }}:${tag}" --format '{{.Manifest.Digest}}')"
+          echo "### \`${{ env.IMAGE }}:${tag}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$digest" >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools inspect "${{ env.IMAGE }}:${tag}" \
+            | grep -E "Platform|Name:" >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # The image has to actually run. A libc mismatch between the source
+      # builder and the runtime base produced a binary that only failed at
+      # startup once — never again from CI (NOTES.md §16).
+      - name: Smoke-test the published image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.plan.outputs.tag }}"
+          if [ "${{ matrix.variant }}" = "slack" ]; then tag="${tag}-slack"; fi
+          ref="${{ env.IMAGE }}:${tag}"
+
+          docker run --rm --entrypoint /usr/local/bin/zeroclaw "$ref" --version
+          docker run --rm --entrypoint /usr/local/bin/kubectl  "$ref" version --client=true >/dev/null
+
+          # The slack variant exists solely to have the Slack channel compiled
+          # in. Prove it, or the build was pointless.
+          if [ "${{ matrix.variant }}" = "slack" ]; then
+            mkdir -p /tmp/zc
+            printf 'schema_version = 3\n[channels.slack.ops]\nenabled = true\nbot_token = "x"\n' > /tmp/zc/config.toml
+            out="$(docker run --rm -v /tmp/zc:/cfg -e ZEROCLAW_CONFIG_DIR=/cfg \
+                     --entrypoint /usr/local/bin/zeroclaw "$ref" channel list 2>&1)"
+            echo "$out"
+            if grep -q "Slack (configured, not compiled)" <<<"$out"; then
+              echo "::error::the slack variant does NOT have channel-slack compiled in"
+              exit 1
+            fi
+            grep -qE "✅ Slack|Slack" <<<"$out" || { echo "::error::no Slack channel reported"; exit 1; }
+            echo "slack channel is compiled in"
+          fi
+
+  # ── Pin the digest so deploys are immutable ──────────────────────
+  pin:
+    needs: [plan, merge]
+    if: needs.plan.outputs.pin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pin into deploy/deployment.yaml
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Resolve the digest from the registry rather than from a matrix
+          # job's outputs, which are whichever leg finished last. The default
+          # variant is what deploy/deployment.yaml should reference; only fall
+          # back to -slack when that is the sole thing built.
+          tag="${{ needs.plan.outputs.tag }}"
+          ref="${{ env.IMAGE }}:${tag}"
+          if ! docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+            ref="${{ env.IMAGE }}:${tag}-slack"
+            echo "no default variant published; pinning $ref"
+          fi
           digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
-          echo "digest: $digest"
-          sed -i -E "s|image: ghcr.io/[^ ]*zeroclaw-sre[^ ]*|image: ghcr.io/${{ github.repository }}@${digest}|g" \
+          [ -n "$digest" ] || { echo "no digest to pin"; exit 1; }
+          sed -i -E "s|image: ghcr.io/[^ ]*zeroclaw-sre[^ ]*|image: ${{ env.IMAGE }}@${digest}|g" \
             deploy/deployment.yaml
           git --no-pager diff deploy/deployment.yaml
 
-      - name: Commit the pin
+      - name: Commit
+        shell: bash
         run: |
+          set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add deploy/deployment.yaml
-          git commit -m "release: pin ${{ steps.v.outputs.version }} image digest" || exit 0
+          git diff --cached --quiet && { echo "already pinned"; exit 0; }
+          git commit -m "release: pin ${{ needs.plan.outputs.tag }} image digest"
           git push origin HEAD:main

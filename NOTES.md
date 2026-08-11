@@ -476,6 +476,58 @@ distribution other people deploy.
 
 ---
 
+## 16. The published base is bookworm, not trixie — pin the source builder to match
+
+Upstream's `Dockerfile` says `FROM debian:trixie-slim` for its runtime stage.
+The image they actually publish is Debian 12:
+
+```
+$ docker run --rm --entrypoint sh ghcr.io/zeroclaw-labs/zeroclaw:debian \
+    -c 'ldd --version | head -1'
+ldd (Debian GLIBC 2.36-9+deb12u14) 2.36
+```
+
+`rust:1.96-slim` is trixie (glibc 2.41), so a source build on it links against
+a newer libc than the runtime has, and the resulting image dies on first exec:
+
+```
+/usr/local/bin/zeroclaw: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.39' not found
+```
+
+The builder is pinned to `rust:1.96-slim-bookworm`. More usefully, the runtime
+stage now ends with `RUN zeroclaw --version`, so a libc or linker mismatch
+fails the **build** instead of becoming a CrashLoopBackOff whose logs say
+nothing about the real cause. The release workflow re-runs the same check
+against the *published* manifest, and additionally asserts that the `slack`
+variant really does report the Slack channel as compiled in — a variant that
+exists for one reason should prove that reason before it is tagged.
+
+The general lesson, which cost a full emulated build: trust the artifact, not
+the Dockerfile that supposedly produced it.
+
+---
+
+## 17. Releases build on native runners, not under emulation
+
+`amd64` under QEMU on an arm64 laptop is slow enough to matter for the normal
+image and completely impractical for the `slack` variant's Rust build. The
+release workflow therefore builds each architecture on a runner of that
+architecture (`ubuntu-latest` for amd64, `ubuntu-24.04-arm` for arm64), pushes
+each result by digest with no tag, and assembles a manifest list per variant
+once every leg has succeeded — so a half-finished matrix can never publish a
+usable tag.
+
+`workflow_dispatch` takes a tag name, which variants to build, and whether to
+pin. That covers scratch builds (`tag: test`) without creating a release, which
+is the day-to-day case when iterating on a cluster.
+
+Digest pinning resolves the digest from the registry rather than from a matrix
+job's `outputs`: with two variants in flight those outputs are whichever leg
+finished last, which would have pinned the Slack image into
+`deploy/deployment.yaml` roughly half the time.
+
+---
+
 ## 10. Open questions for the operator
 
 1. **kubectl skew.** Pinned to `v1.36.3` to match current stable k3s

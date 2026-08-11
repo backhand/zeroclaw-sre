@@ -66,9 +66,14 @@ RUN set -eux; \
 # ZC_SLACK=0 (the default) nothing below is compiled at all.
 #
 # ZC_FEATURES adds to the crate's default feature set rather than replacing it.
-# 0.8.4 declares rust-version = 1.96.1; an older toolchain fails resolution
-# before it compiles anything.
-FROM rust:1.96-slim AS zcsource
+# Two pins that both matter:
+#   1.96 — 0.8.4 declares rust-version = 1.96.1, and an older toolchain fails
+#          resolution before compiling anything.
+#   bookworm — the published runtime image is Debian 12 (glibc 2.36) even
+#          though upstream's own Dockerfile says trixie. Building on trixie
+#          (glibc 2.41) produces a binary that dies at startup with
+#          "GLIBC_2.39 not found". The builder must match the runtime's libc.
+FROM rust:1.96-slim-bookworm AS zcsource
 ARG ZC_VERSION=v0.8.4
 ARG ZC_FEATURES=channel-slack
 RUN apt-get update \
@@ -106,6 +111,11 @@ RUN set -eux; \
 
 # Either the published binary or the source build, per ZC_SLACK.
 COPY --from=zcbin /usr/local/bin/zeroclaw /usr/local/bin/zeroclaw
+
+# Smoke-test the binary in the runtime image, not just in the builder. A libc
+# or linker mismatch between the two otherwise surfaces as a crash-looping pod
+# rather than a failed build.
+RUN zeroclaw --version
 
 COPY --from=tools    /out/kubectl       /usr/local/bin/kubectl
 COPY --from=tools    /out/gh            /usr/local/bin/gh

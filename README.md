@@ -362,6 +362,13 @@ the PVC is ReadWriteOnce. Do not change it to RollingUpdate.
 
 ## Development
 
+Images are built by CI, not locally — `amd64` under emulation on an arm64
+machine is slow, and the Slack variant's Rust build is impractical that way.
+Run the **release** workflow from the Actions tab: give it a tag (`test` for a
+scratch build), pick `default`, `slack` or `both`, and it builds each
+architecture on a native runner. Pushing a `v*.*.*` tag does the same thing and
+pins the digest into `deploy/deployment.yaml`.
+
 ```bash
 make help          # every target
 make lint          # shellcheck, YAML, go vet/test, envsubst dry-run, gitleaks
