@@ -67,7 +67,11 @@ forbidden_paths = [
 shell_env_passthrough = [
   "PATH", "HOME", "LANG",
   "KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT",
-  "GH_TOKEN", "GH_REPO", "ALLOWED_NAMESPACES", "SWEEP_STATE_DIR",
+  # GH_TOKEN is deliberately NOT here. The shell's `gh` therefore has no
+  # credential, and the only way to write to GitHub is k8s__file_issue, which
+  # can open an issue and nothing else. A prompt-injected agent cannot push
+  # code, close issues or read a private repo it was never pointed at.
+  "GH_REPO", "ALLOWED_NAMESPACES", "SWEEP_STATE_DIR",
 ]
 # Explicitly always-allowed, regardless of how a tool is classified. Mostly
 # redundant now that medium-risk runs unattended, but it states the intent and
@@ -90,7 +94,12 @@ auto_approve = [
 # Writing files in the workspace is never part of the job; if the model wants
 # to, a human should see why. Enforced at the tool layer, which is the only
 # layer the model cannot narrate its way past.
-always_ask = ["file_write", "file_edit"]
+# Each mutation asks on its own. This is the gate that `shell` could never
+# provide: reads stay silent while every state change stops for a human.
+always_ask = [
+  "file_write", "file_edit",
+  "k8s__prune_replicaset", "k8s__file_issue",
+]
 
 # The agent must not be able to clear its own approval gate. A run parked at a
 # `requires_confirmation` step was observed reaching the next step anyway, with
@@ -107,6 +116,19 @@ agentic = true
 max_tool_iterations = 40
 max_tool_result_chars = 12000
 shell_timeout_secs = 60
+
+# ── The mutation executor ────────────────────────────────────────
+# Mutations live here rather than in `shell` so each one can be approved on its
+# own. Tools arrive named `k8s__<tool>`; the agent sees `k8s__prune_replicaset`
+# and `k8s__file_issue`. Runs as a subprocess of the daemon and inherits its
+# environment, which is how it holds GH_TOKEN while the shell no longer does.
+[mcp]
+deferred_loading = false
+
+[[mcp.servers]]
+name = "k8s"
+transport = "stdio"
+command = "/usr/local/bin/mcp-executor"
 
 # ── Skills ───────────────────────────────────────────────────────
 # Absolute on purpose: a relative bundle directory resolves against the install

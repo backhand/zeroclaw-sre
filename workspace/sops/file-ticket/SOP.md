@@ -29,8 +29,8 @@ Writes to GitHub, not to the cluster.
    - tools: shell, memory_store
 
 5. **Otherwise open one** — Title: `[k3s] <namespace>/<workload>: <reason>`. Body must carry, in this order: a `fingerprint: <fingerprint>` line (this is what step 3 searches for), first-seen and last-seen timestamps, consecutive-sweep count, the owning workload and image, the last 20 log lines in a fenced block, the relevant events, and the exact kubectl commands that produced the evidence. Label it `zeroclaw-sre`.
-   `gh issue create --repo "<repo>" --label zeroclaw-sre --title "..." --body-file -`
-   - tools: shell
+   Call the `k8s__file_issue` tool with `repo`, `title`, `body` and `labels: ["zeroclaw-sre"]`. `gh issue create` will not work — the shell has no GitHub credential; the executor holds it, and issue creation is the only GitHub write that exists.
+   - tools: k8s__file_issue
 
 6. **Link it back** — Store the issue URL under `sweep:<fingerprint>` so later sweeps annotate the digest with `(issue #N)` instead of filing again, and post the URL to chat in one line naming the repo it went to.
    - tools: memory_store, send_via

@@ -64,6 +64,8 @@ sh bin/prune-rs.sh list ns three | 1 | keep must be a number
 sh bin/prune-rs.sh prune ns | 1 | prune needs
 grep -qF "prune-rs.sh" SKILL.md | 0 |
 grep -qF "revisionHistoryLimit" SKILL.md | 0 |
+grep -qF "k8s__prune_replicaset" SKILL.md | 0 |
+grep -qF "k8s__file_issue" SKILL.md | 0 |
 
 # ── The hard rules must still name what is forbidden ─────────────
 grep -qF "kubectl drain" SKILL.md | 0 |

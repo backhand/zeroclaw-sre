@@ -24,6 +24,18 @@ RUN go vet ./... && go test ./...
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
     go build -trimpath -ldflags='-s -w' -o /out/alert-adapter .
 
+# ── Stage 0b: the MCP executor ───────────────────────────────────
+# Typed, individually-approvable mutations. See mcp-executor/main.go for why
+# this exists rather than more `shell`.
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS executor
+ARG TARGETARCH
+WORKDIR /src
+COPY mcp-executor/go.mod ./
+COPY mcp-executor/*.go ./
+RUN go vet ./... && go test ./...
+RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH}" \
+    go build -trimpath -ldflags='-s -w' -o /out/mcp-executor .
+
 # ── Stage 1: pinned CLI tooling ──────────────────────────────────
 FROM debian:trixie-slim AS tools
 ARG TARGETARCH
@@ -131,6 +143,7 @@ RUN zeroclaw --version
 COPY --from=tools    /out/kubectl       /usr/local/bin/kubectl
 COPY --from=tools    /out/gh            /usr/local/bin/gh
 COPY --from=adapter  /out/alert-adapter /usr/local/bin/alert-adapter
+COPY --from=executor /out/mcp-executor  /usr/local/bin/mcp-executor
 
 # The distro payload. /opt/distro is read-only at runtime; entrypoint.sh copies
 # skills/ and sops/ from here into the live workspace on every boot, which makes
@@ -140,6 +153,7 @@ COPY workspace/               /opt/distro/workspace/
 COPY entrypoint.sh            /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh \
              /usr/local/bin/alert-adapter \
+             /usr/local/bin/mcp-executor \
              /usr/local/bin/kubectl \
              /usr/local/bin/gh \
  && chmod -R a+rX /opt/distro

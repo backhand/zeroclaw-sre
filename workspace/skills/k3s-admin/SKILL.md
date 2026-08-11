@@ -54,9 +54,9 @@ loudly — but do not attempt.
 4. `kubectl rollout undo` of a workload — only ever as its own approved step,
    never as an automatic reaction to a failed rollout;
 5. deletion of a **superseded, scaled-to-zero ReplicaSet**, via the
-   `prune-replicasets` procedure and only through `prune-rs.sh prune`, which
-   re-checks the object before removing it. Never `kubectl delete replicaset`
-   directly — the re-check is the whole safeguard.
+   `prune-replicasets` procedure and only through the `k8s__prune_replicaset`
+   tool, which re-checks the object and requires an approval every time. Never
+   `kubectl delete replicaset`, never `prune-rs.sh prune`.
 
 and all of them only when **all** of the following hold:
 
@@ -256,13 +256,24 @@ still terminating, and outside the newest `keep` revisions (default 3). Those
 kept revisions are what `kubectl rollout undo` needs — say so when you propose a
 prune, because deleting them is what makes a rollback impossible.
 
-Delete only via `prune-rs.sh prune <namespace> <name>`, one at a time. It
-re-reads the object first, so a ReplicaSet that went live again between listing
-and deleting is refused rather than taking its pods down with it.
+Delete only via the **`k8s__prune_replicaset`** tool, one ReplicaSet per call.
+It re-reads the object first, so one that went live again between listing and
+deleting is refused rather than taking its pods down with it — and unlike a
+shell command, it stops for an approval every single time.
+
+`prune-rs.sh prune` still exists but is for operators at a terminal. You must
+not call it: it bypasses the approval the tool carries.
 
 Kubernetes already caps this per Deployment with `.spec.revisionHistoryLimit`
 (default 10). If an operator is drowning in old ReplicaSets, lowering that limit
 is the better answer and costs them nothing — mention it.
+
+### Filing a ticket
+
+`gh issue create` will fail: the shell has no GitHub credential. The executor
+holds it, and **`k8s__file_issue`** is the only GitHub write that exists —
+deliberately, so that a hostile instruction cannot push code, close issues, or
+read a private repo. Pass `repo`, `title`, `body` and `labels`.
 
 ### Which repo a ticket goes to
 

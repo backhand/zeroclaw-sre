@@ -21,8 +21,8 @@ Steps 1–2 are read-only. Step 4 deletes, and cannot run without approval.
    - kind: checkpoint
    - requires_confirmation: true
 
-5. **Prune** — For each approved candidate run `prune-rs.sh prune <namespace> <name>`. The script re-checks that the ReplicaSet is still scaled to zero immediately before deleting, because a rollback between step 2 and here would have made it live again. Never use `kubectl delete` directly — the re-check is the point. Stop on the first refusal and report it; do not work around it.
-   - tools: shell
+5. **Prune** — For each approved candidate call the `k8s__prune_replicaset` tool with its namespace and name. One call per ReplicaSet. The tool re-reads the object and refuses anything that is no longer scaled to zero, because a rollback between step 2 and here would have made it live again. Never use `kubectl delete` and never use `prune-rs.sh prune` — both bypass the approval this tool carries. Stop on the first refusal and report it verbatim; do not work around it.
+   - tools: k8s__prune_replicaset
    - requires_confirmation: true
 
 6. **Confirm** — Post one line with the number deleted per namespace and any that were refused, with the reason given.
