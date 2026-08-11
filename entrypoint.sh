@@ -143,12 +143,23 @@ fi
 : "${ZC_ALLOWED_USERS_SLACK:=$ZC_ALLOWED_USERS}"
 : "${ZC_ALLOWED_USERS_DISCORD:=$ZC_ALLOWED_USERS}"
 
-if [ -z "${GH_TOKEN:-}" ] || [ -z "$GH_REPO" ]; then
-  log "WARNING: GH_TOKEN/GH_REPO unset — ticket filing (FR4) is disabled."
+# Ticket filing needs a *credential*. It does not need GH_REPO: which repo a
+# finding belongs to is resolved per workload (annotation -> namespace
+# annotation -> repo map -> wildcard -> GH_REPO), and when none of those
+# answer, the agent asks in chat and records the reply. GH_REPO is only the
+# last-resort default, so gating the whole feature on it would disable ticket
+# filing for exactly the clusters that need the per-workload mapping most.
+if is_set "${GH_TOKEN:-}"; then
+  export GH_ENABLED=true
+  if [ -z "$GH_REPO" ]; then
+    log "note: GH_REPO unset — that is fine. Each workload's repo comes from its"
+    log "      sre.zeroclaw/github-repo annotation or the repo map, and the agent"
+    log "      asks in chat once when a workload has neither."
+  fi
+else
+  log "WARNING: GH_TOKEN unset — ticket filing (FR4) is disabled."
   log "         Findings will be reported to chat only; the file-ticket SOP will refuse to run."
   export GH_ENABLED=false
-else
-  export GH_ENABLED=true
 fi
 
 if [ -z "$ALLOWED_NAMESPACES" ]; then

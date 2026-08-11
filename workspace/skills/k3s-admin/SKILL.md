@@ -245,6 +245,9 @@ First hit wins: the workload's `sre.zeroclaw/github-repo` annotation, then its
 namespace's annotation, then an exact entry in the repo map, then the namespace
 wildcard, then `$GH_REPO`.
 
+`$GH_REPO` being unset is not a problem and never a reason to skip filing — it
+is only the last entry in that list.
+
 Empty output means nobody has said yet. **Ask in chat** — name the workload,
 quote the finding in one line, and accept `owner/repo` or `skip`. Record what
 you are told:

@@ -10,7 +10,7 @@ Writes to GitHub, not to the cluster.
 
 ## Steps
 
-1. **Resolve the repo** — Run `sh "$ZC_WORKSPACE_DIR/skills/k3s-admin/bin/repo-map.sh" resolve <namespace> <workload>`. It checks, in order: the workload's `sre.zeroclaw/github-repo` annotation, its namespace's annotation, the exact entry in the repo map, the namespace wildcard, then `$GH_REPO`. Non-empty output is the answer — use it and go to step 3.
+1. **Resolve the repo** — Require `$GH_TOKEN`; without a credential nothing can be filed, so say so in one line and stop. `$GH_REPO` being unset is *not* a reason to stop — it is only the last-resort default. Run `sh "$ZC_WORKSPACE_DIR/skills/k3s-admin/bin/repo-map.sh" resolve <namespace> <workload>`, which checks the workload's `sre.zeroclaw/github-repo` annotation, its namespace's annotation, the exact entry in the repo map, the namespace wildcard, then `$GH_REPO`. Non-empty output is the answer — use it and go to step 3.
    - tools: shell
 
 2. **Ask, once, when it is unknown** — Empty output means nobody has ever said where this workload's issues belong. Use `ask_user` to ask in chat, naming the workload and quoting the finding in one line, e.g. *"prod/api-gateway is CrashLoopBackOff for the 3rd sweep. Which GitHub repo should I file this in? (owner/repo, or 'skip')"*. Then:

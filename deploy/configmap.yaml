@@ -60,7 +60,11 @@ data:
   ZC_FANOUT_CHANNEL_REF: "discord.ops"
 
   # ── Ticketing ──────────────────────────────────────────────────
-  # owner/repo for FR4. Needs GH_TOKEN in the Secret to take effect.
+  # OPTIONAL last-resort default. Ticket filing is enabled by GH_TOKEN in the
+  # Secret, not by this. Each workload's repo comes from its
+  # sre.zeroclaw/github-repo annotation or the repo map, and the agent asks in
+  # chat once for anything that has neither. Set this only if a single repo is
+  # a sensible catch-all for the whole cluster.
   GH_REPO: ""
 
   # ── Sandbox ────────────────────────────────────────────────────
