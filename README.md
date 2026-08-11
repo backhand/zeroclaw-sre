@@ -35,7 +35,9 @@ deviation and the evidence.
   v1.36.3; see [NOTES.md §10](NOTES.md)). `metrics-server` must be running —
   it ships with k3s by default and rightsizing depends on it.
 - **A default StorageClass.** k3s's `local-path` is fine.
-- **An Anthropic API key.**
+- **An LLM API key.** Anthropic by default; any provider family ZeroClaw
+  supports works — set `ZC_PROVIDER_FAMILY` and `ZC_MODEL` in the ConfigMap
+  (e.g. `xai` + `grok-4.5`).
 - **A Slack app** and **a Discord bot** (below).
 - Optional: a **GitHub token** for ticket filing, and **Alertmanager** for the
   alert path.
@@ -43,17 +45,42 @@ deviation and the evidence.
 ### Slack app
 
 1. Create an app at <https://api.slack.com/apps> → *From scratch*.
-2. **Socket Mode** → enable. Generate an app-level token with the
-   `connections:write` scope → this is `SLACK_APP_TOKEN` (`xapp-…`).
-3. **OAuth & Permissions** → bot token scopes:
-   `app_mentions:read`, `channels:history`, `groups:history`, `chat:write`,
-   `reactions:read`, `users:read`. Install to the workspace →
-   `SLACK_BOT_TOKEN` (`xoxb-…`).
-4. **Event Subscriptions** → subscribe to bot events: `app_mention`,
-   `message.channels` (and `message.groups` for private channels).
+2. **Socket Mode** → enable. Generate an app-level token with
+   **`connections:write`** → this is `SLACK_APP_TOKEN` (`xapp-…`). That is the
+   only app-level scope, and it is not a bot scope.
+3. **OAuth & Permissions** → **bot token scopes**. The required set, and what
+   each one is actually for:
+
+   | Scope | Needed for |
+   |---|---|
+   | `chat:write` | posting digests, proposals and answers (`chat.postMessage`, `chat.update`) |
+   | `app_mentions:read` | receiving `@zeroclaw why is prod/api broken?` |
+   | `channels:history` | reading the thread an approval reply lands in |
+   | `channels:read` | resolving the channel IDs in `SLACK_CHANNEL_IDS` |
+   | `users:read` | mapping a sender to an operator ID before honouring an approval |
+
+   Add only if they apply to you:
+
+   | Scope | Needed for |
+   |---|---|
+   | `groups:history`, `groups:read` | the ops channel is **private** |
+   | `im:history`, `im:read`, `mpim:history`, `mpim:read` | ChatOps in DMs / group DMs |
+   | `reactions:read`, `reactions:write` | only if you set `cancel_reaction` on the channel |
+   | `files:read`, `files:write` | file uploads — this distribution never uploads files |
+
+   Install to the workspace → `SLACK_BOT_TOKEN` (`xoxb-…`).
+4. **Event Subscriptions** → subscribe to bot events: **`app_mention`** and
+   **`message.channels`** (plus `message.groups` for a private channel).
+
+   `message.channels` is not optional even though the bot is configured with
+   `mention_only = true`. Approvals are replies in a thread and people do not
+   @-mention the bot to say "approve"; the runtime lets un-mentioned *thread*
+   replies through precisely so that works, but it can only do that if Slack
+   delivers the message event at all.
 5. Invite the bot to your ops channel and copy the channel ID (`C…`) →
    `SLACK_CHANNEL_IDS`.
-6. No signing secret is needed — Socket Mode authenticates with the app token.
+6. No signing secret is needed — Socket Mode authenticates with the app token,
+   and 0.8.x has no `signing_secret` field to put one in.
 
 ### Discord bot
 
@@ -106,7 +133,7 @@ environment:
 
 ```bash
 kubectl -n zeroclaw-sre create secret generic zeroclaw-sre \
-  --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  --from-literal=LLM_API_KEY="$LLM_API_KEY" \
   --from-literal=SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
   --from-literal=SLACK_APP_TOKEN="$SLACK_APP_TOKEN" \
   --from-literal=DISCORD_BOT_TOKEN="$DISCORD_BOT_TOKEN" \

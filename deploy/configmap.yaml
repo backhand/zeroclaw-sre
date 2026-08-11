@@ -39,7 +39,20 @@ data:
   HEARTBEAT_CRON: "0 7 * * *"
 
   # ── Model ──────────────────────────────────────────────────────
+  # Provider family and model. The family names a `[providers.models.<family>]`
+  # group that ZeroClaw knows (anthropic, openai, xai, gemini, ollama, groq,
+  # openrouter, …); the key in the Secret is used for whichever you pick.
+  # `zeroclaw providers` lists them all.
+  ZC_PROVIDER_FAMILY: "anthropic"
   ZC_MODEL: "claude-sonnet-4-5"
+
+  # ── Chat routing ───────────────────────────────────────────────
+  # Which channels the agent serves, which one receives the scheduled digest,
+  # and which one it is fanned out to. Change these only if you rename or add
+  # channel blocks in config.toml.tmpl.
+  ZC_AGENT_CHANNELS: "slack.ops,discord.ops"
+  ZC_DIGEST_CHANNEL_REF: "slack.ops"
+  ZC_FANOUT_CHANNEL_REF: "discord.ops"
 
   # ── Ticketing ──────────────────────────────────────────────────
   # owner/repo for FR4. Needs GH_TOKEN in the Secret to take effect.

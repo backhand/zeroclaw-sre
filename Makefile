@@ -16,7 +16,10 @@ ALLOWED_NAMESPACES ?= default
 K3D_CLUSTER      ?= zeroclaw-sre-e2e
 
 # Dummy values for the envsubst dry-run. Never used at runtime.
-DRYRUN_ENV = ZC_MODEL=claude-sonnet-4-5 ZC_DATA_DIR=/data ZC_WORKSPACE_DIR=/data/workspace \
+DRYRUN_ENV = ZC_PROVIDER_FAMILY=anthropic ZC_MODEL=claude-sonnet-4-5 \
+             ZC_AGENT_CHANNELS_TOML='"slack.ops", "discord.ops"' \
+             ZC_DIGEST_CHANNEL_REF=slack.ops ZC_FANOUT_CHANNEL_REF=discord.ops \
+             ZC_SLACK_ENABLED=true ZC_DISCORD_ENABLED=true ZC_FANOUT_INSTRUCTION='fanout sentence' ZC_DATA_DIR=/data ZC_WORKSPACE_DIR=/data/workspace \
              ZC_SANDBOX_BACKEND=none ZC_WEBHOOK_PORT=42618 \
              SLACK_CHANNEL_IDS_TOML='"C0"' SLACK_DIGEST_CHANNEL=C0 \
              DISCORD_GUILD_IDS_TOML='"1"' DISCORD_CHANNEL_IDS_TOML='"2"' DISCORD_DIGEST_CHANNEL=2 \
@@ -55,7 +58,7 @@ lint-go: ## Vet and test the alert adapter
 render-check: ## envsubst dry-run: the template must render to parseable TOML with nothing left unsubstituted
 	@mkdir -p .build
 	@env $(DRYRUN_ENV) envsubst \
-	  '$$ZC_MODEL $$ZC_DATA_DIR $$ZC_WORKSPACE_DIR $$ZC_SANDBOX_BACKEND $$ZC_WEBHOOK_PORT $$SLACK_CHANNEL_IDS_TOML $$SLACK_DIGEST_CHANNEL $$DISCORD_GUILD_IDS_TOML $$DISCORD_CHANNEL_IDS_TOML $$DISCORD_DIGEST_CHANNEL $$ZC_ALLOWED_USERS_SLACK_TOML $$ZC_ALLOWED_USERS_DISCORD_TOML $$SWEEP_CRON $$RIGHTSIZE_CRON $$HEARTBEAT_CRON $$ALLOWED_NAMESPACES $$GH_REPO' \
+	  '$$ZC_PROVIDER_FAMILY $$ZC_AGENT_CHANNELS_TOML $$ZC_SLACK_ENABLED $$ZC_DISCORD_ENABLED $$ZC_FANOUT_INSTRUCTION $$ZC_DIGEST_CHANNEL_REF $$ZC_FANOUT_CHANNEL_REF $$ZC_MODEL $$ZC_DATA_DIR $$ZC_WORKSPACE_DIR $$ZC_SANDBOX_BACKEND $$ZC_WEBHOOK_PORT $$SLACK_CHANNEL_IDS_TOML $$SLACK_DIGEST_CHANNEL $$DISCORD_GUILD_IDS_TOML $$DISCORD_CHANNEL_IDS_TOML $$DISCORD_DIGEST_CHANNEL $$ZC_ALLOWED_USERS_SLACK_TOML $$ZC_ALLOWED_USERS_DISCORD_TOML $$SWEEP_CRON $$RIGHTSIZE_CRON $$HEARTBEAT_CRON $$ALLOWED_NAMESPACES $$GH_REPO' \
 	  < config/config.toml.tmpl > .build/config.toml
 	@if grep -n '\$${' .build/config.toml; then \
 	  echo "render-check: unsubstituted placeholder above"; exit 1; fi
@@ -78,10 +81,10 @@ build: ## Build the image for the host architecture
 .PHONY: image-test
 image-test: ## Run the in-image self-test (config render, SOP validate, skill audit + test)
 	docker run --rm \
-	  -e ANTHROPIC_API_KEY=sk-ant-selftest \
-	  -e DISCORD_BOT_TOKEN=selftest -e DISCORD_GUILD_ID=000 \
+	  -e LLM_API_KEY=selftest-key \
 	  -e SLACK_BOT_TOKEN=xoxb-selftest -e SLACK_APP_TOKEN=xapp-selftest \
 	  -e SLACK_CHANNEL_IDS=C0000000000 \
+	  -e DISCORD_BOT_TOKEN=selftest -e DISCORD_GUILD_ID=000 \
 	  -e ZC_WEBHOOK_SECRET=selftest -e ZC_GATEWAY_TOKEN=selftest \
 	  -e ZC_ALLOWED_USERS=U0000000000 \
 	  -e ALLOWED_NAMESPACES=default \

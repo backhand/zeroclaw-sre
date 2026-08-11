@@ -239,6 +239,17 @@ func TestHealthzFollowsGateway(t *testing.T) {
 	}
 }
 
+// Liveness must stay green while the gateway is down — otherwise the kubelet
+// restarts the adapter in a loop for a fault that is not its own.
+func TestLivezIsIndependentOfGateway(t *testing.T) {
+	s := newTestServer(t, "http://127.0.0.1:1") // nothing listening
+	rec := httptest.NewRecorder()
+	s.handleLivez(rec, httptest.NewRequest(http.MethodGet, "/livez", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("livez with a dead gateway: got %d, want 200", rec.Code)
+	}
+}
+
 // A long payload must be truncated, never dropped and never unbounded.
 func TestPromptIsBounded(t *testing.T) {
 	var p alertmanagerPayload

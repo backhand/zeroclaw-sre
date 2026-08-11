@@ -79,7 +79,10 @@ func loadConfig() (config, error) {
 		webhookSecret: os.Getenv("ZC_WEBHOOK_SECRET"),
 		gatewayToken:  os.Getenv("ZC_GATEWAY_TOKEN"),
 		sopName:       envOr("ZC_ALERT_SOP", "alert-investigate"),
-		requestTO:     90 * time.Second,
+		// Matches gateway.request_timeout_secs: a truncated investigation is
+		// worse than a slow one, and Alertmanager's own timeout is the real
+		// backstop on the other side.
+		requestTO:     600 * time.Second,
 	}
 	var missing []string
 	if c.webhookSecret == "" {
@@ -286,6 +289,14 @@ func (s *server) handleAlert(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleLivez answers for the adapter process alone. Liveness must never
+// depend on a dependency being up: an agent that is down is a reason to stop
+// accepting alerts (readiness), not a reason for the kubelet to keep killing
+// the perfectly healthy process that would have reported the problem.
+func (s *server) handleLivez(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "alive"})
+}
+
 // handleHealthz reports ready only when the gateway behind us is up, so the
 // adapter never advertises readiness for a pod that cannot investigate.
 func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -346,6 +357,7 @@ func main() {
 	mux.HandleFunc("/alerts", s.handleAlert)
 	mux.HandleFunc("/", s.handleAlert)
 	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/livez", s.handleLivez)
 
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,

@@ -9,7 +9,9 @@
 # See NOTES.md §2 and deploy/secret.example.yaml for the exact variable names.
 #
 # Only these placeholders are substituted (all non-secret):
-#   ZC_MODEL ZC_DATA_DIR ZC_WORKSPACE_DIR ZC_SANDBOX_BACKEND
+#   ZC_PROVIDER_FAMILY ZC_MODEL ZC_DATA_DIR ZC_WORKSPACE_DIR ZC_SANDBOX_BACKEND
+#   ZC_AGENT_CHANNELS_TOML ZC_DIGEST_CHANNEL_REF ZC_FANOUT_CHANNEL_REF
+#   ZC_FANOUT_INSTRUCTION ZC_SLACK_ENABLED ZC_DISCORD_ENABLED
 #   SLACK_CHANNEL_IDS_TOML SLACK_DIGEST_CHANNEL
 #   DISCORD_GUILD_IDS_TOML DISCORD_CHANNEL_IDS_TOML DISCORD_DIGEST_CHANNEL
 #   ZC_ALLOWED_USERS_SLACK_TOML ZC_ALLOWED_USERS_DISCORD_TOML
@@ -19,8 +21,11 @@
 schema_version = 3
 
 # ── Model provider ───────────────────────────────────────────────
-# api_key arrives as ZEROCLAW_providers__models__anthropic__sre__api_key.
-[providers.models.anthropic.sre]
+# The family is a template variable so this distribution is not welded to one
+# vendor: `anthropic` by default, but any family ZeroClaw knows works — set
+# ZC_PROVIDER_FAMILY and a matching ZC_MODEL. The key arrives as
+# ZEROCLAW_providers__models__<family>__sre__api_key, exported by entrypoint.sh.
+[providers.models.${ZC_PROVIDER_FAMILY}.sre]
 model = "${ZC_MODEL}"
 temperature = 0.0
 
@@ -82,10 +87,10 @@ prompt_injection_mode = "full"
 # ── The agent ────────────────────────────────────────────────────
 [agents.sre]
 enabled = true
-model_provider = "anthropic.sre"
+model_provider = "${ZC_PROVIDER_FAMILY}.sre"
 risk_profile = "sre"
 runtime_profile = "sre"
-channels = ["slack.ops", "discord.ops"]
+channels = [${ZC_AGENT_CHANNELS_TOML}]
 skill_bundles = ["k3s"]
 cron_jobs = ["sweep", "rightsize", "heartbeat"]
 
@@ -99,7 +104,7 @@ backend = "sqlite"
 # Slack over Socket Mode: bot_token + app_token, no public URL, no signing
 # secret (see NOTES.md §4 — 0.8.x SlackConfig has no signing_secret field).
 [channels.slack.ops]
-enabled = true
+enabled = ${ZC_SLACK_ENABLED}
 channel_ids = [${SLACK_CHANNEL_IDS_TOML}]
 mention_only = true
 thread_replies = true
@@ -107,7 +112,7 @@ stream_drafts = true
 
 # Discord over its outbound gateway.
 [channels.discord.ops]
-enabled = true
+enabled = ${ZC_DISCORD_ENABLED}
 guild_ids = [${DISCORD_GUILD_IDS_TOML}]
 channel_ids = [${DISCORD_CHANNEL_IDS_TOML}]
 mention_only = true
@@ -152,11 +157,12 @@ prompt = """
 Run the crashloop-sweep SOP now: call sop_execute with name "crashloop-sweep" and follow its steps.
 Namespaces in scope: ${ALLOWED_NAMESPACES}.
 Silence means healthy: if every pod in scope is Running or Succeeded, post nothing at all and reply exactly SWEEP_CLEAN.
+${ZC_FANOUT_INSTRUCTION}
 """
 
 [cron.sweep.delivery]
 mode = "announce"
-channel = "slack.ops"
+channel = "${ZC_DIGEST_CHANNEL_REF}"
 to = "${SLACK_DIGEST_CHANNEL}"
 best_effort = true
 
@@ -170,11 +176,12 @@ prompt = """
 Run the rightsize SOP now: call sop_execute with name "rightsize" and follow its steps.
 Namespaces in scope: ${ALLOWED_NAMESPACES}.
 Stop at the approval gate. Never patch anything before an operator approves in chat.
+${ZC_FANOUT_INSTRUCTION}
 """
 
 [cron.rightsize.delivery]
 mode = "announce"
-channel = "slack.ops"
+channel = "${ZC_DIGEST_CHANNEL_REF}"
 to = "${SLACK_DIGEST_CHANNEL}"
 best_effort = true
 
@@ -186,15 +193,15 @@ uses_memory = false
 session_target = "isolated"
 prompt = """
 Post the daily heartbeat. Run `kubectl get nodes --no-headers | wc -l` and
-`kubectl get pods --all-namespaces --no-headers | wc -l`, then post ONE line to
-Slack and, with send_via(target: "discord.ops", body: <same line>), to Discord:
+`kubectl get pods --all-namespaces --no-headers | wc -l`, then post ONE line:
 "heartbeat OK — <n> nodes, <n> pods, sweeps running, last finding: <fingerprint or none>".
+${ZC_FANOUT_INSTRUCTION}
 Do not investigate anything. Do not open tickets.
 """
 
 [cron.heartbeat.delivery]
 mode = "announce"
-channel = "slack.ops"
+channel = "${ZC_DIGEST_CHANNEL_REF}"
 to = "${SLACK_DIGEST_CHANNEL}"
 best_effort = true
 
@@ -225,10 +232,28 @@ check_updates = false
 allow_self_upgrade = false
 webhook_rate_limit_per_minute = 120
 idempotency_ttl_secs = 900
+# A real investigation is a multi-step agentic turn: enumerate, describe, read
+# events, tail logs, resolve the owning workload. The default 30s cuts the HTTP
+# request off long before that finishes, so an Alertmanager alert would be
+# truncated on every single call. 10 minutes matches ZeroClaw's own
+# long-running route budget. NOTES.md §13.
+request_timeout_secs = 600
+long_running_request_timeout_secs = 900
 
 # ── State ────────────────────────────────────────────────────────
+# `memory.backend` is a *reference* to a storage instance, not a backend name:
+# "sqlite" resolves to storage.sqlite.default, which has to exist. Without this
+# block the daemon starts with "Memory: none" and silently forgets every
+# fingerprint between sweeps — which would quietly break the escalation ladder
+# and ticket dedupe. NOTES.md §12.
+# The instance must exist for the reference above to resolve; the runtime owns
+# the file layout underneath it (<install root>/data/{memory,sop,cron}/*.db),
+# which is on the PVC either way.
+[storage.sqlite.default]
+open_timeout_secs = 15
+
 [memory]
-backend = "sqlite"
+backend = "sqlite.default"
 auto_save = true
 audit_enabled = true
 

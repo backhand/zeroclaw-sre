@@ -322,11 +322,39 @@ Stated plainly, because the difference matters:
 - the adapter's auth, idempotency, framing and truncation — Go unit tests;
 - shellcheck, YAML parsing, TOML round-trip, `gitleaks`-shaped literal scans.
 
-**Not executed**
+**Verified on a real k3s cluster** (2 nodes, v1.35.5+k3s1, xAI `grok-4.5`)
 
-- **the k3d acceptance suite** (`tests/e2e/`). `k3d` is not installed on this
-  machine, so the suite is written and lint-clean but has never been run. CI
-  runs it on every push; the first green run there is the real signal.
+- boot, `/health`, adapter `/healthz` through the Service;
+- the rendered config on the PVC contains no credential value, mode 0600, and
+  a recursive scan of the whole volume finds no token;
+- the adapter rejects a wrong or missing secret with 401 and a GET with 405,
+  before any model call; the correct secret reaches the agent;
+- **a real sweep**: the agent enumerated a namespace, pulled events and logs,
+  and returned a digest in the documented format naming both broken workloads
+  with reason, restart count, age and a log signature;
+- the RBAC boundary, as the pod's own ServiceAccount: delete/create/update,
+  secrets, configmaps, nodes and RBAC all denied; reads and namespaced patch
+  allowed; patch denied in every namespace without a RoleBinding;
+- state survives `kubectl delete pod` — memory, receipts and SOP run state are
+  all under the PVC and the agent recalls prior turns afterwards.
+
+Sections 11–13 above are the four defects that run exposed.
+
+**Still not executed**
+
+- **the k3d acceptance suite** (`tests/e2e/`). `k3d` is not installed on the
+  build host, so the suite is written and lint-clean but has never been run as
+  a suite. CI runs it on every push; the first green run there is the real
+  signal.
+- **Slack and Discord delivery.** Verified only that the configured bot token
+  authenticates (`auth.test`) and carries the scopes the README lists. Nothing
+  has been posted to a real channel: Socket Mode also needs an app-level token
+  (`xapp-…`), and the bot must be invited to the channel first.
+- **The `sweep:<fingerprint>` memory writes.** The sweep produced a correct
+  digest but did not store the per-finding fingerprint keys that step 3 of the
+  SOP asks for, so the escalation ladder's counter was not exercised. The SOP
+  wording may need to be more imperative about that step; treat FR4's
+  three-sweep threshold as unproven until it is.
 - **anything requiring a live model call or live chat credentials** — the
   digest wording, the proposal table, the dedupe search. The suite exercises
   these when `ANTHROPIC_API_KEY` (and, for dedupe, `GH_TOKEN` +
@@ -336,6 +364,60 @@ Stated plainly, because the difference matters:
   arm64 host). The Dockerfile is arch-parameterised (`TARGETARCH` for the
   adapter, kubectl and gh) and the release workflow builds both, but amd64 has
   not been produced yet.
+
+---
+
+## 11. Env overrides cannot reach a nested block inside an alias-keyed map
+
+`ZEROCLAW_channels__slack__ops__bot_token` works (alias + scalar).
+`ZEROCLAW_cron__sweep__delivery__channel` does **not**: the resolver drops the
+alias segment and reports `Unknown property 'cron.delivery.channel'`, which
+aborts daemon startup. Verified against 0.8.4 for both
+`cron__<alias>__delivery__*` and `cron__<alias>__cron_delivery__*`.
+
+Anything one level deeper than `<section>.<alias>.<field>` therefore has to be
+a template variable, not an override. That is why `ZC_DIGEST_CHANNEL_REF`,
+`ZC_FANOUT_CHANNEL_REF` and `ZC_AGENT_CHANNELS` exist.
+
+---
+
+## 12. `memory.backend` is a reference, not a backend name
+
+`[memory] backend = "sqlite"` looks like it names a backend. It does not — it
+is a dotted reference to a storage instance (`sqlite.default` →
+`Config.storage.sqlite.default`). With no `[storage.sqlite.default]` block the
+reference resolves to nothing and the daemon starts, cheerfully, with:
+
+```
+🧠 Memory:   none (auto-save: on)
+```
+
+Nothing fails. The agent simply forgets every fingerprint between sweeps, which
+silently disables the escalation ladder and ticket dedupe — the two features
+that depend on remembering what was seen last time. The config now declares the
+storage instance explicitly, and a real deploy is what surfaced this.
+
+---
+
+## 13. Two more found by deploying, not by reading
+
+**The gateway pre-shared bearer must be seeded as a SHA-256 digest.**
+`gateway.paired_tokens` stores digests, and ZeroClaw decides whether a
+configured entry is a digest or a plaintext token *by its shape*: exactly 64
+hex characters means "already hashed"
+(`crates/zeroclaw-config/src/pairing.rs`, `is_token_hash`). `openssl rand
+-hex 32` — the generator in this project's own README — produces exactly 64 hex
+characters. Seeding the raw token therefore stored it as a digest whose
+preimage nobody has: every authenticated request 401'd while `/health`
+reported `"paired": true`. `entrypoint.sh` now hashes the token before seeding
+it, which is unambiguous for any token shape an operator picks.
+
+**`gateway.request_timeout_secs` defaults to 30 seconds.** A real
+investigation — enumerate, describe, read events, tail logs, resolve the owning
+workload — takes minutes. At the default, `POST /webhook` returns an empty body
+long before the agent finishes, so every Alertmanager-driven investigation
+would have been truncated. Now set to 600, matching ZeroClaw's own
+long-running-route budget, with the adapter's client timeout aligned to it.
 
 ---
 

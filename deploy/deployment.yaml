@@ -120,8 +120,11 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
+          # Liveness checks only the adapter itself. Tying it to /healthz would
+          # restart a healthy adapter every time the agent it fronts is down —
+          # a dependency outage is a readiness signal, not a liveness one.
           livenessProbe:
-            httpGet: { path: /healthz, port: alerts }
+            httpGet: { path: /livez, port: alerts }
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 6

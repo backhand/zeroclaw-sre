@@ -99,6 +99,9 @@ kubectl -n "$E2E_NS" create configmap zeroclaw-sre \
   --from-literal=GH_REPO="${E2E_GH_REPO:-}" \
   --from-literal=ZC_MODEL="${ZC_MODEL:-claude-sonnet-4-5}" \
   --from-literal=ZC_SANDBOX_BACKEND="none" \
+  --from-literal=ZC_AGENT_CHANNELS="webhook.sink" \
+  --from-literal=ZC_DIGEST_CHANNEL_REF="webhook.sink" \
+  --from-literal=ZC_FANOUT_CHANNEL_REF="webhook.sink" \
   --from-literal=SWEEP_CRON="0 3 * * *" \
   --from-literal=RIGHTSIZE_CRON="0 4 * * 1" \
   --from-literal=HEARTBEAT_CRON="0 5 * * *" \
@@ -117,6 +120,11 @@ import sys, yaml
 doc = yaml.safe_load(open(sys.argv[1]))
 spec = doc["spec"]["template"]["spec"]
 sink = "http://chat-sink.e2e-sink.svc.cluster.local:8080/messages"
+# The sink channel itself is created by env override (a two-level path, which
+# the override layer handles). Which channel the agent *delivers* to is a
+# template variable instead: the override layer drops the map alias for nested
+# blocks under `cron.<alias>`, so `cron.sweep.delivery.channel` is unreachable
+# that way. See NOTES.md §11.
 overrides = {
     "ZEROCLAW_channels__webhook__sink__enabled": "true",
     "ZEROCLAW_channels__webhook__sink__port": "42619",
@@ -124,11 +132,8 @@ overrides = {
     "ZEROCLAW_channels__webhook__sink__send_method": "POST",
     "ZEROCLAW_channels__slack__ops__enabled": "false",
     "ZEROCLAW_channels__discord__ops__enabled": "false",
-    "ZEROCLAW_agents__sre__channels": '["webhook.sink"]',
     "ZEROCLAW_peer_groups__ops_slack__channel": "webhook.sink",
-    "ZEROCLAW_cron__sweep__delivery__channel": "webhook.sink",
-    "ZEROCLAW_cron__rightsize__delivery__channel": "webhook.sink",
-    "ZEROCLAW_cron__heartbeat__delivery__channel": "webhook.sink",
+    "ZEROCLAW_peer_groups__ops_discord__channel": "webhook.sink",
 }
 for c in spec["containers"]:
     c["imagePullPolicy"] = "Never"

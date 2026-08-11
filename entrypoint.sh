@@ -29,26 +29,66 @@ ZC_DATA_DIR="$ZEROCLAW_CONFIG_DIR"
 ZC_WORKSPACE_DIR="${ZC_WORKSPACE_DIR:-$ZEROCLAW_CONFIG_DIR/workspace}"
 
 # ── 1. Required environment ──────────────────────────────────────
+# The LLM key is family-agnostic: LLM_API_KEY is canonical, ANTHROPIC_API_KEY
+# is accepted as its alias so a Secret written from the spec's variable list
+# still works.
+: "${LLM_API_KEY:=${ANTHROPIC_API_KEY:-}}"
+
+# A value left as the README's placeholder counts as unset — otherwise the
+# daemon boots and hammers a chat API with a token that can never work.
+is_set() { case "${1:-}" in ""|*REPLACE_ME*) return 1 ;; *) return 0 ;; esac; }
+
+# Every chat variable is optional now, so give them all a defined empty value
+# before `set -u` can trip over one that a Slack-only (or Discord-only)
+# operator legitimately left out.
+: "${SLACK_BOT_TOKEN:=}"
+: "${SLACK_APP_TOKEN:=}"
+: "${SLACK_CHANNEL_IDS:=}"
+: "${DISCORD_BOT_TOKEN:=}"
+: "${DISCORD_GUILD_ID:=}"
+
 required=(
-  ANTHROPIC_API_KEY
-  DISCORD_BOT_TOKEN
-  DISCORD_GUILD_ID
-  SLACK_BOT_TOKEN
-  SLACK_APP_TOKEN
-  SLACK_CHANNEL_IDS
+  LLM_API_KEY
   ZC_WEBHOOK_SECRET
   ZC_GATEWAY_TOKEN
 )
 missing=()
 for var in "${required[@]}"; do
-  if [ -z "${!var:-}" ]; then missing+=("$var"); fi
+  if ! is_set "${!var:-}"; then missing+=("$var"); fi
 done
 if [ ${#missing[@]} -gt 0 ]; then
   log "missing required environment variables:"
   for var in "${missing[@]}"; do log "  - $var"; done
-  log "see README.md 'Creating the Secret' — every one of these comes from the"
-  log "zeroclaw-sre Secret; the pod cannot start without them."
+  log "see README.md 'Creating the Secret' — these come from the zeroclaw-sre"
+  log "Secret and the pod cannot start without them."
   exit 78   # EX_CONFIG
+fi
+
+# ── Which chat channels are actually usable ──────────────────────
+# Each channel is independent: configure one, the other, or both. A channel
+# with no token is disabled outright rather than left to fail on every connect.
+ZC_SLACK_ENABLED=false
+ZC_DISCORD_ENABLED=false
+is_set "${SLACK_BOT_TOKEN:-}"   && is_set "${SLACK_CHANNEL_IDS:-}" && ZC_SLACK_ENABLED=true
+is_set "${DISCORD_BOT_TOKEN:-}" && is_set "${DISCORD_GUILD_ID:-}"  && ZC_DISCORD_ENABLED=true
+
+if [ "$ZC_SLACK_ENABLED" = false ] && [ "$ZC_DISCORD_ENABLED" = false ]; then
+  log "no chat channel is configured. Set either:"
+  log "  - SLACK_BOT_TOKEN + SLACK_CHANNEL_IDS, or"
+  log "  - DISCORD_BOT_TOKEN + DISCORD_GUILD_ID"
+  log "The agent has no way to report a finding without one."
+  exit 78
+fi
+
+# Slack inbound needs Socket Mode, which needs the app-level token. Without it
+# the bot token still posts perfectly well — but nothing comes back, and an
+# approval is an inbound message.
+if [ "$ZC_SLACK_ENABLED" = true ] && ! is_set "${SLACK_APP_TOKEN:-}"; then
+  log "WARNING: SLACK_APP_TOKEN is not set, so Slack is SEND-ONLY."
+  log "         Digests and proposals will post. Questions, replies and"
+  log "         APPROVALS will not arrive — rightsizing can propose but can"
+  log "         never apply. Create an app-level token with the"
+  log "         connections:write scope to enable Socket Mode."
 fi
 
 # SLACK_SIGNING_SECRET is accepted but unused: Socket Mode authenticates with
@@ -58,7 +98,27 @@ if [ -n "${SLACK_SIGNING_SECRET:-}" ]; then
 fi
 
 # ── 2. Optional environment, with documented defaults ────────────
+: "${ZC_PROVIDER_FAMILY:=anthropic}"
 : "${ZC_MODEL:=claude-sonnet-4-5}"
+# Which channel the digest is delivered to, and which one it is fanned out to.
+# Template variables rather than env overrides: ZeroClaw's override layer drops
+# the map alias for nested blocks under `cron.<alias>`, so `delivery.channel`
+# is unreachable that way (NOTES.md §11).
+enabled_channels=""
+[ "$ZC_SLACK_ENABLED" = true ]   && enabled_channels="slack.ops"
+[ "$ZC_DISCORD_ENABLED" = true ] && enabled_channels="${enabled_channels:+$enabled_channels,}discord.ops"
+: "${ZC_AGENT_CHANNELS:=$enabled_channels}"
+: "${ZC_DIGEST_CHANNEL_REF:=${enabled_channels%%,*}}"
+# The fanout target is the *other* channel. With only one configured there is
+# nothing to fan out to, and the prompt drops the instruction entirely rather
+# than telling the agent to post the same digest to the same place twice.
+if [ "$ZC_SLACK_ENABLED" = true ] && [ "$ZC_DISCORD_ENABLED" = true ]; then
+  : "${ZC_FANOUT_CHANNEL_REF:=discord.ops}"
+  ZC_FANOUT_INSTRUCTION="Then send the identical text to the second channel with send_via(target: \"${ZC_FANOUT_CHANNEL_REF}\", body: <same text>)."
+else
+  : "${ZC_FANOUT_CHANNEL_REF:=${enabled_channels%%,*}}"
+  ZC_FANOUT_INSTRUCTION="Only one chat channel is configured; do not call send_via."
+fi
 : "${ZC_SANDBOX_BACKEND:=none}"      # see NOTES.md §6 before changing
 : "${ZC_WEBHOOK_PORT:=42618}"        # never bound; the block only carries `secret`
 : "${SWEEP_CRON:=*/15 * * * *}"
@@ -122,7 +182,11 @@ if [ -z "$ZC_ALLOWED_USERS_SLACK_TOML" ] && [ -z "$ZC_ALLOWED_USERS_DISCORD_TOML
   log "         Rightsizing will propose but can never be approved. Set it."
 fi
 
-export ZC_MODEL ZC_DATA_DIR ZC_WORKSPACE_DIR ZC_SANDBOX_BACKEND ZC_WEBHOOK_PORT \
+ZC_AGENT_CHANNELS_TOML="$(csv_to_toml_list "$ZC_AGENT_CHANNELS")"
+
+export ZC_PROVIDER_FAMILY ZC_AGENT_CHANNELS_TOML ZC_DIGEST_CHANNEL_REF ZC_FANOUT_CHANNEL_REF \
+       ZC_FANOUT_INSTRUCTION ZC_SLACK_ENABLED ZC_DISCORD_ENABLED \
+       ZC_MODEL ZC_DATA_DIR ZC_WORKSPACE_DIR ZC_SANDBOX_BACKEND ZC_WEBHOOK_PORT \
        SLACK_CHANNEL_IDS_TOML SLACK_DIGEST_CHANNEL \
        DISCORD_GUILD_IDS_TOML DISCORD_CHANNEL_IDS_TOML DISCORD_DIGEST_CHANNEL \
        ZC_ALLOWED_USERS_SLACK_TOML ZC_ALLOWED_USERS_DISCORD_TOML \
@@ -132,7 +196,9 @@ export ZC_MODEL ZC_DATA_DIR ZC_WORKSPACE_DIR ZC_SANDBOX_BACKEND ZC_WEBHOOK_PORT 
 # Explicit variable list: envsubst leaves every other $NAME untouched, so a
 # stray shell-looking token in a prompt can never be eaten.
 # shellcheck disable=SC2016  # the literal ${NAME} tokens are envsubst's input, not shell expansions
-SUBST_VARS='${ZC_MODEL} ${ZC_DATA_DIR} ${ZC_WORKSPACE_DIR} ${ZC_SANDBOX_BACKEND}
+SUBST_VARS='${ZC_PROVIDER_FAMILY} ${ZC_AGENT_CHANNELS_TOML} ${ZC_FANOUT_INSTRUCTION}
+${ZC_SLACK_ENABLED} ${ZC_DISCORD_ENABLED}
+${ZC_DIGEST_CHANNEL_REF} ${ZC_FANOUT_CHANNEL_REF} ${ZC_MODEL} ${ZC_DATA_DIR} ${ZC_WORKSPACE_DIR} ${ZC_SANDBOX_BACKEND}
 ${ZC_WEBHOOK_PORT} ${SLACK_CHANNEL_IDS_TOML} ${SLACK_DIGEST_CHANNEL}
 ${DISCORD_GUILD_IDS_TOML} ${DISCORD_CHANNEL_IDS_TOML} ${DISCORD_DIGEST_CHANNEL}
 ${ZC_ALLOWED_USERS_SLACK_TOML} ${ZC_ALLOWED_USERS_DISCORD_TOML}
@@ -160,12 +226,24 @@ fi
 
 # ── 5. Secrets -> in-memory config overrides ─────────────────────
 # Human-readable Secret keys on the left, ZeroClaw schema paths on the right.
-export ZEROCLAW_providers__models__anthropic__sre__api_key="$ANTHROPIC_API_KEY"
-export ZEROCLAW_channels__slack__ops__bot_token="$SLACK_BOT_TOKEN"
-export ZEROCLAW_channels__slack__ops__app_token="$SLACK_APP_TOKEN"
-export ZEROCLAW_channels__discord__ops__bot_token="$DISCORD_BOT_TOKEN"
+export "ZEROCLAW_providers__models__${ZC_PROVIDER_FAMILY}__sre__api_key=$LLM_API_KEY"
+if [ "$ZC_SLACK_ENABLED" = true ]; then
+  export ZEROCLAW_channels__slack__ops__bot_token="$SLACK_BOT_TOKEN"
+  is_set "${SLACK_APP_TOKEN:-}" && export ZEROCLAW_channels__slack__ops__app_token="$SLACK_APP_TOKEN"
+fi
+if [ "$ZC_DISCORD_ENABLED" = true ]; then
+  export ZEROCLAW_channels__discord__ops__bot_token="$DISCORD_BOT_TOKEN"
+fi
 export ZEROCLAW_channels__webhook__alerts__secret="$ZC_WEBHOOK_SECRET"
-export ZEROCLAW_gateway__paired_tokens="$ZC_GATEWAY_TOKEN"
+# `gateway.paired_tokens` stores SHA-256 digests, and ZeroClaw decides whether a
+# configured entry is a digest or a plaintext token by its shape: exactly 64 hex
+# characters means "already hashed" (crates/zeroclaw-config/src/pairing.rs,
+# is_token_hash). `openssl rand -hex 32` produces exactly 64 hex characters, so
+# seeding the raw token would be read as a digest whose preimage nobody has, and
+# every request would 401 while /health still cheerfully reported paired: true.
+# Hash it here instead: unambiguous for any token shape the operator picks.
+ZC_GATEWAY_TOKEN_HASH="$(printf '%s' "$ZC_GATEWAY_TOKEN" | sha256sum | cut -d" " -f1)"
+export ZEROCLAW_gateway__paired_tokens="$ZC_GATEWAY_TOKEN_HASH"
 
 # ── 6. Sync the distro payload into the live workspace ───────────
 # Distro-owned trees are replaced wholesale on every boot: an image tag bump is
