@@ -69,8 +69,18 @@ fi
 # with no token is disabled outright rather than left to fail on every connect.
 ZC_SLACK_ENABLED=false
 ZC_DISCORD_ENABLED=false
-is_set "${SLACK_BOT_TOKEN:-}"   && is_set "${SLACK_CHANNEL_IDS:-}" && ZC_SLACK_ENABLED=true
-is_set "${DISCORD_BOT_TOKEN:-}" && is_set "${DISCORD_GUILD_ID:-}"  && ZC_DISCORD_ENABLED=true
+is_set "${SLACK_BOT_TOKEN:-}"   && ZC_SLACK_ENABLED=true
+is_set "${DISCORD_BOT_TOKEN:-}" && ZC_DISCORD_ENABLED=true
+
+# SLACK_CHANNEL_IDS and DISCORD_CHANNEL_IDS are a *filter*, not a requirement.
+# Left empty — the default — the bot listens in every channel it has been
+# invited to, which is the behaviour people expect from a bot: you add it where
+# you want it and it works there. Access control is the operator roster
+# (ZC_ALLOWED_USERS), not the channel list.
+if [ "$ZC_SLACK_ENABLED" = true ] && ! is_set "${SLACK_CHANNEL_IDS:-}"; then
+  log "note: SLACK_CHANNEL_IDS is empty — Slack listens in every channel the bot"
+  log "      is invited to. Set it only to narrow that."
+fi
 
 if [ "$ZC_SLACK_ENABLED" = false ] && [ "$ZC_DISCORD_ENABLED" = false ]; then
   log "no chat channel is configured. Set either:"
@@ -146,10 +156,15 @@ if [ -z "$ALLOWED_NAMESPACES" ]; then
   log "      namespace is writable (rightsizing needs an explicit list)."
 fi
 
-# The digest lands wherever the operator points it; default to the first
-# configured Slack channel so a minimal Secret still works.
+# Scheduled digests are *proactive*: unlike a reply, there is no incoming
+# message to answer, so they need an explicit destination.
 if [ -z "$SLACK_DIGEST_CHANNEL" ]; then
   SLACK_DIGEST_CHANNEL="${SLACK_CHANNEL_IDS%%,*}"
+fi
+if [ "$ZC_SLACK_ENABLED" = true ] && [ -z "$SLACK_DIGEST_CHANNEL" ]; then
+  log "WARNING: no SLACK_DIGEST_CHANNEL and no SLACK_CHANNEL_IDS — the agent will"
+  log "         answer when mentioned, but the scheduled sweep and heartbeat have"
+  log "         nowhere to post. Set SLACK_DIGEST_CHANNEL to a channel ID."
 fi
 if [ -z "$DISCORD_DIGEST_CHANNEL" ] && [ -n "$DISCORD_CHANNEL_IDS" ]; then
   DISCORD_DIGEST_CHANNEL="${DISCORD_CHANNEL_IDS%%,*}"

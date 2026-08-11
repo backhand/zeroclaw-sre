@@ -10,9 +10,14 @@ metadata:
     app.kubernetes.io/name: zeroclaw-sre
 data:
   # ── Chat targets ───────────────────────────────────────────────
-  # Slack channel IDs the agent listens in. The first one receives the sweep
-  # digest unless SLACK_DIGEST_CHANNEL says otherwise.
-  SLACK_CHANNEL_IDS: "C0000000000"
+  # OPTIONAL filter. Empty (the default) means the bot listens wherever it has
+  # been invited — invite it to a channel and it works there. Set it only to
+  # narrow that. Access control is ZC_ALLOWED_USERS below, not this list.
+  SLACK_CHANNEL_IDS: ""
+
+  # REQUIRED for scheduled output. The sweep digest and heartbeat are proactive
+  # messages with no incoming message to reply to, so they need a destination.
+  # A channel ID (C…), from the channel's details pane in Slack.
   SLACK_DIGEST_CHANNEL: ""
 
   # Discord guild the bot is restricted to, and the channels it watches.
