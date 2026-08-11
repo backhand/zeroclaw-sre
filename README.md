@@ -362,6 +362,19 @@ the PVC is ReadWriteOnce. Do not change it to RollingUpdate.
 
 ## Development
 
+### Publishing images
+
+The **release** workflow needs write access to the GHCR package. `GITHUB_TOKEN`
+only has that for a package **linked to this repository** — a package whose
+first push came from a laptop is not linked, and the push fails with a bare
+`403 Forbidden` that says nothing about why. Fix it once, either way:
+
+- **Link the package** (preferred): GitHub → Packages → `zeroclaw-sre` →
+  *Package settings* → *Manage Actions access* → add this repository with the
+  **Write** role. Nothing else to change.
+- **Or add a PAT**: create a token with `write:packages` and save it as the
+  repository secret `GHCR_TOKEN`. The workflow prefers it when present.
+
 Images are built by CI, not locally — `amd64` under emulation on an arm64
 machine is slow, and the Slack variant's Rust build is impractical that way.
 Run the **release** workflow from the Actions tab: give it a tag (`test` for a
