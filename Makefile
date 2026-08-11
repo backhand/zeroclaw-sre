@@ -110,9 +110,11 @@ release: ## Build and push the multi-arch image, then pin its digest into deploy
 # ── 3. Deploy ────────────────────────────────────────────────────
 
 .PHONY: rolebindings
-rolebindings: ## Emit a write RoleBinding per namespace in ALLOWED_NAMESPACES
+rolebindings: ## Emit write + prune RoleBindings per namespace in ALLOWED_NAMESPACES
 	@list='$(ALLOWED_NAMESPACES)'; IFS=,; for ns in $$list; do \
-	  printf -- '---\napiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: zeroclaw-sre-write\n  namespace: %s\n  labels:\n    app.kubernetes.io/name: zeroclaw-sre\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: zeroclaw-sre-write\nsubjects:\n  - kind: ServiceAccount\n    name: zeroclaw-sre\n    namespace: $(NAMESPACE)\n' "$$ns"; \
+	  for role in write prune; do \
+	    printf -- '---\napiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: zeroclaw-sre-%s\n  namespace: %s\n  labels:\n    app.kubernetes.io/name: zeroclaw-sre\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: zeroclaw-sre-%s\nsubjects:\n  - kind: ServiceAccount\n    name: zeroclaw-sre\n    namespace: $(NAMESPACE)\n' "$$role" "$$ns" "$$role"; \
+	  done; \
 	done
 
 .PHONY: deploy

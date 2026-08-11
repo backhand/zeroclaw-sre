@@ -54,5 +54,21 @@ sh bin/repo-map.sh record ns app "o r" | 1 | is not an owner/repo
 grep -qF repo-map.sh SKILL.md | 0 |
 grep -qF "sre.zeroclaw/github-repo" SKILL.md | 0 |
 
+# ── The prune helper ─────────────────────────────────────────────
+# Offline behaviour: usage, argument validation, and that it never accepts a
+# non-numeric keep value (which would otherwise make the jq rank comparison
+# silently wrong).
+sh bin/prune-rs.sh | 1 | usage:
+sh bin/prune-rs.sh list | 1 | list needs
+sh bin/prune-rs.sh list ns three | 1 | keep must be a number
+sh bin/prune-rs.sh prune ns | 1 | prune needs
+grep -qF "prune-rs.sh" SKILL.md | 0 |
+grep -qF "revisionHistoryLimit" SKILL.md | 0 |
+
+# ── The hard rules must still name what is forbidden ─────────────
+grep -qF "kubectl drain" SKILL.md | 0 |
+grep -qF "kubectl scale" SKILL.md | 0 |
+grep -qF "never a pod, never a Deployment" SKILL.md | 0 |
+
 # ── No credential-shaped literals committed in the skill ─────────
 grep -Eqr "(xox[baprs]-[A-Za-z0-9-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,})" . | 1 |

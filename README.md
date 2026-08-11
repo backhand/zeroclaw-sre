@@ -25,6 +25,8 @@ deviation and the evidence.
 | **Alert investigation** | Alertmanager POSTs to a cluster-internal endpoint; the agent checks the alert against live cluster state and reports whether it is real, stale or resolved. |
 | **Rightsizing** | Weekly: compares `kubectl top` against configured requests/limits, posts a proposal table, and waits. Applies `kubectl patch` of the resources block only, after approval, in allowed namespaces only. |
 | **Ticketing** | A finding seen in three consecutive sweeps becomes one GitHub issue, in the repo that owns that workload. Later sweeps comment on it; they never open a second. When it does not know the repo, it asks in chat once and remembers the answer. |
+| **Releasing** | `release` SOP: proposes an image change or restart, waits for approval, applies it, then watches the rollout land — and offers a rollback as its own approved step if it does not. |
+| **Pruning** | `prune-replicasets` SOP: removes superseded, scaled-to-zero ReplicaSets while keeping recent revisions for rollback. The only procedure that deletes anything. |
 | **ChatOps** | Ask "why is prod/api broken?" in Slack or Discord and get an answer from commands run right then, never from memory. |
 
 ---
@@ -419,9 +421,12 @@ NOTES.md                every deviation from the build spec, with evidence
 
 Five layers, outermost first. Only the first one is not talk:
 
-1. **RBAC** — no `delete`, no `create`, no `update`, no access to secrets or
-   configmaps, anywhere. `patch` on workloads only, only in namespaces you
-   bound. This holds regardless of what the model decides to do.
+1. **RBAC** — no `create`, no `update`, no access to secrets or configmaps,
+   anywhere. `patch` on workloads only, in namespaces you bound. The single
+   destructive verb is `delete` on **replicasets**, in its own ClusterRole
+   (`zeroclaw-sre-prune`) that you bind per namespace and can drop entirely —
+   see [NOTES.md §19](NOTES.md). Everything here holds regardless of what the
+   model decides to do.
 2. **Autonomy `supervised`** — medium-risk shell asks in chat; high-risk is
    blocked. A strict `allowed_commands` list means anything not named is
    refused outright.

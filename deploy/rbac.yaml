@@ -106,6 +106,31 @@ rules:
     verbs: ["patch"]
 
 ---
+# The one destructive verb in this distribution, kept in its own ClusterRole so
+# it is visible in a review and revocable on its own.
+#
+# `delete` on replicasets ONLY. Not pods, not deployments, not anything else.
+# Deleting a superseded ReplicaSet removes a rollout-history entry; deleting one
+# that still has replicas would kill running pods, which is why the prune
+# procedure refuses any ReplicaSet that is not already scaled to zero and always
+# keeps the most recent revisions for rollback.
+#
+# Note before you bind this: Kubernetes already prunes old ReplicaSets per
+# Deployment via `.spec.revisionHistoryLimit` (default 10). Lowering that limit
+# is free and needs no agent at all. Bind this role for what that does not
+# cover — orphans, or a tighter retention than the limit gives you.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zeroclaw-sre-prune
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+rules:
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["delete"]
+
+---
 # NO WRITE BINDING SHIPS BY DEFAULT.
 #
 # Applying this file gives the agent cluster-wide *read* and nothing else. That
@@ -116,6 +141,10 @@ rules:
 # Grant write explicitly, per namespace, when you actually want it:
 #
 #   make rolebindings ALLOWED_NAMESPACES=prod,staging | kubectl apply -f -
+#
+# That emits a binding for zeroclaw-sre-write (patch) and one for
+# zeroclaw-sre-prune (delete replicasets). Drop the prune binding if you do not
+# want the agent removing rollout history.
 #
 # and set the same list in ALLOWED_NAMESPACES so the agent's intent matches
 # what RBAC permits. A namespace with no RoleBinding stays read-only no matter

@@ -32,7 +32,9 @@ loudly — but do not attempt.
 
 **Never run, under any circumstance:**
 
-- `kubectl delete` (anything, including pods "to restart them")
+- `kubectl delete` of anything except a superseded ReplicaSet through the
+  `prune-replicasets` procedure — never a pod, never a Deployment, never
+  "just to restart it"
 - `kubectl drain`, `kubectl cordon`, `kubectl uncordon`, `kubectl taint`
 - `kubectl scale`, or any replica-count change
 - `kubectl edit` / `kubectl apply` / `kubectl create` / `kubectl replace`
@@ -46,10 +48,17 @@ loudly — but do not attempt.
 **The only mutations you may ever make:**
 
 1. `kubectl patch` of a workload's **`resources` block only**
-   (requests/limits), and
-2. `kubectl rollout restart` of a workload,
+   (requests/limits), via the `rightsize` procedure;
+2. `kubectl set image` of a workload's container, via the `release` procedure;
+3. `kubectl rollout restart` of a workload, via the `release` procedure;
+4. `kubectl rollout undo` of a workload — only ever as its own approved step,
+   never as an automatic reaction to a failed rollout;
+5. deletion of a **superseded, scaled-to-zero ReplicaSet**, via the
+   `prune-replicasets` procedure and only through `prune-rs.sh prune`, which
+   re-checks the object before removing it. Never `kubectl delete replicaset`
+   directly — the re-check is the whole safeguard.
 
-and both only when **all** of the following hold:
+and all of them only when **all** of the following hold:
 
 - the workload is in a namespace listed in `$ALLOWED_NAMESPACES`
   (if that variable is empty, there is no writable namespace — propose only), and
@@ -69,6 +78,9 @@ echo "${ALLOWED_NAMESPACES:-<unset>}"
 - **Reads** cover every namespace unless the operator narrowed the question.
 - **Writes** are confined to `$ALLOWED_NAMESPACES`. Empty means no writes at
   all, ever — say so plainly rather than proposing a patch you cannot apply.
+- **Deleting a ReplicaSet** additionally needs the `zeroclaw-sre-prune`
+  RoleBinding in that namespace. If it is absent the delete is refused by the
+  API server; report that rather than looking for another route.
 
 Build the namespace flag once and reuse it:
 
@@ -230,6 +242,27 @@ Rules for proposals:
 - Round up: CPU to the next 50m, memory to the next 64Mi.
 - Never propose a change of less than 20% — churn is worse than slack.
 - Never touch replicas, image, probes, or anything outside `resources`.
+
+### Pruning old ReplicaSets
+
+Never decide by eye which ReplicaSets are stale. Ask:
+
+```sh
+sh "$ZC_WORKSPACE_DIR/skills/k3s-admin/bin/prune-rs.sh" list <namespace> [keep]
+```
+
+It returns only ReplicaSets owned by a Deployment, scaled to zero, with nothing
+still terminating, and outside the newest `keep` revisions (default 3). Those
+kept revisions are what `kubectl rollout undo` needs — say so when you propose a
+prune, because deleting them is what makes a rollback impossible.
+
+Delete only via `prune-rs.sh prune <namespace> <name>`, one at a time. It
+re-reads the object first, so a ReplicaSet that went live again between listing
+and deleting is refused rather than taking its pods down with it.
+
+Kubernetes already caps this per Deployment with `.spec.revisionHistoryLimit`
+(default 10). If an operator is drowning in old ReplicaSets, lowering that limit
+is the better answer and costs them nothing — mention it.
 
 ### Which repo a ticket goes to
 

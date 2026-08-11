@@ -1,0 +1,14 @@
+[sop]
+name = "release"
+description = "Roll a workload to a new image tag, or restart it, and watch the rollout. Changes nothing without operator approval."
+version = "1.0.0"
+priority = "high"
+execution_mode = "supervised"
+agent = "sre"
+max_concurrent = 1
+admission_policy = "hold"
+max_pending_approvals = 2
+cooldown_secs = 0
+
+[[triggers]]
+type = "manual"

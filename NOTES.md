@@ -563,6 +563,47 @@ safe, noisy, and slow.
 
 ---
 
+## 19. The agent can now release and prune, and RBAC gained one delete verb
+
+Requested explicitly. It changes the claim in §9 of the README, so it is stated
+here rather than buried.
+
+**Releasing** needed no RBAC change at all: `kubectl set image` and
+`kubectl rollout restart` are both PATCHes, which `zeroclaw-sre-write` already
+allowed. What was missing was policy — the skill forbade image changes and no
+procedure existed. There is now a `release` SOP that records the current image
+and revision, verifies the target tag is pullable, proposes, gates on approval,
+applies, and then *waits for the rollout to land* — offering `rollout undo` as
+its own separately-approved step if it does not.
+
+**Pruning** did need a new verb: `delete` on `replicasets`, in its own
+ClusterRole (`zeroclaw-sre-prune`), bound per namespace like the write role and
+droppable on its own. Not pods, not deployments, nothing else.
+
+The safeguard is not the approval button, which a determined prompt can talk
+its way to. It is `prune-rs.sh`, which only ever returns ReplicaSets that are
+owned by a Deployment, scaled to zero, with nothing still terminating, and
+outside the newest `keep` revisions (default 3) — and which **re-reads the
+object immediately before deleting it**, so one that went live again between
+listing and pruning is refused rather than taking its pods with it. The SOP
+forbids `kubectl delete replicaset` directly for exactly that reason.
+
+Worth saying to any operator who asks for this: Kubernetes already caps old
+ReplicaSets per Deployment via `.spec.revisionHistoryLimit`, default 10.
+Lowering it is free and needs no agent. On the cluster this was built against,
+67 of 103 ReplicaSets were already scaled to zero — all within their limits —
+so the honest framing is that this trims below the platform's own ceiling, it
+does not fix an absence.
+
+What this costs: the README's line that "there is no delete verb, so no prompt
+however clever can produce one" is no longer true in namespaces bound to
+`zeroclaw-sre-prune`. It is true everywhere else, and the blast radius where it
+is bound is one superseded ReplicaSet — no running pods, no Deployment, no
+rollback beyond `keep`. Do not bind the prune role in a namespace where losing
+rollout history matters.
+
+---
+
 ## 10. Open questions for the operator
 
 1. **kubectl skew.** Pinned to `v1.36.3` to match current stable k3s
