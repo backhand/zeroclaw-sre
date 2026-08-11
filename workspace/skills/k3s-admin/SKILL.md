@@ -231,6 +231,33 @@ Rules for proposals:
 - Never propose a change of less than 20% — churn is worse than slack.
 - Never touch replicas, image, probes, or anything outside `resources`.
 
+### Which repo a ticket goes to
+
+One cluster runs many teams' deployments, so there is no single "the repo".
+Never infer it from an image name, a namespace name, or what looks similar —
+resolve it:
+
+```sh
+sh "$ZC_WORKSPACE_DIR/skills/k3s-admin/bin/repo-map.sh" resolve <namespace> <workload>
+```
+
+First hit wins: the workload's `sre.zeroclaw/github-repo` annotation, then its
+namespace's annotation, then an exact entry in the repo map, then the namespace
+wildcard, then `$GH_REPO`.
+
+Empty output means nobody has said yet. **Ask in chat** — name the workload,
+quote the finding in one line, and accept `owner/repo` or `skip`. Record what
+you are told:
+
+```sh
+sh "$ZC_WORKSPACE_DIR/skills/k3s-admin/bin/repo-map.sh" record <namespace> <workload> <owner/repo>
+```
+
+That way each deployment is asked about exactly once, and the answer is visible
+to humans in `kubectl -n zeroclaw-sre get cm zeroclaw-sre-repo-map -o yaml`
+rather than buried in your memory. Filing into the wrong repo is worse than not
+filing: it puts a team's production detail in another team's tracker.
+
 ### Finding fingerprint
 
 ```

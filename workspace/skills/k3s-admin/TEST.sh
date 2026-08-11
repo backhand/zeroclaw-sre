@@ -42,5 +42,17 @@ sh tests/jq-fixture.sh oomkilled | 0 | OOMKilled
 sh tests/jq-fixture.sh healthy | 0 | ^$
 grep -qF "jq/unhealthy-pods.jq" SKILL.md | 0 |
 
+# ── The repo-map helper ──────────────────────────────────────────
+# Behaviour that must hold without a cluster: usage, and refusing anything that
+# is not a bare owner/repo before it can reach `gh issue create`.
+sh bin/repo-map.sh | 1 | usage:
+sh bin/repo-map.sh resolve | 1 | resolve needs
+sh bin/repo-map.sh record ns app | 1 | record needs
+sh bin/repo-map.sh record ns app https://github.com/o/r | 1 | is not an owner/repo
+sh bin/repo-map.sh record ns app "o/r;whoami" | 1 | is not an owner/repo
+sh bin/repo-map.sh record ns app "o r" | 1 | is not an owner/repo
+grep -qF repo-map.sh SKILL.md | 0 |
+grep -qF "sre.zeroclaw/github-repo" SKILL.md | 0 |
+
 # ── No credential-shaped literals committed in the skill ─────────
 grep -Eqr "(xox[baprs]-[A-Za-z0-9-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,})" . | 1 |

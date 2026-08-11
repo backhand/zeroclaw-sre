@@ -1,0 +1,80 @@
+# Per-workload GitHub repo mapping (FR4).
+#
+# One cluster runs many teams' deployments, so "which repo does this issue
+# belong in" is a per-workload question with no single right answer. The agent
+# resolves it in this order, first hit wins:
+#
+#   1. annotation on the workload      sre.zeroclaw/github-repo: owner/repo
+#   2. annotation on its namespace     sre.zeroclaw/github-repo: owner/repo
+#   3. exact entry in this ConfigMap   "namespace/workload"
+#   4. namespace default here          "namespace/*"
+#   5. GH_REPO in the ConfigMap        cluster-wide fallback (often unset)
+#
+# Annotations first, because then the mapping lives with the workload in
+# whatever repo already owns its manifests, and gets reviewed with it. This
+# ConfigMap is for workloads whose manifests you do not control.
+#
+# When nothing resolves, the agent asks in chat and records the answer here —
+# so each deployment is asked about exactly once. It is a plain ConfigMap on
+# purpose: `kubectl edit` it, review it, or commit it to git. Compare that with
+# burying the mapping in the agent's own memory, where it would be invisible,
+# unreviewable, lost with the volume, and dependent on the model reliably
+# choosing to write it down.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zeroclaw-sre-repo-map
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+# A single JSON object, because ConfigMap keys cannot contain "/". It must stay
+# valid JSON — no comments inside the value. Edit by hand freely; the agent
+# rewrites the whole value each time it records a mapping.
+#
+# A populated map looks like:
+#
+#   map.json: |
+#     {
+#       "prod/api-gateway": "acme/api-gateway",
+#       "prod/*":           "acme/platform",
+#       "data/etl":         "acme/data-pipelines"
+#     }
+data:
+  map.json: |
+    {}
+
+---
+# The agent's ClusterRole deliberately grants no access to configmaps at all —
+# they routinely carry credentials. This Role re-opens exactly one object, by
+# name, in the agent's own namespace: it can read and update the repo map and
+# nothing else. `resourceNames` is what keeps it to that one object.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zeroclaw-sre-repo-map
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["zeroclaw-sre-repo-map"]
+    verbs: ["get", "patch", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zeroclaw-sre-repo-map
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: zeroclaw-sre-repo-map
+subjects:
+  - kind: ServiceAccount
+    name: zeroclaw-sre
+    namespace: zeroclaw-sre

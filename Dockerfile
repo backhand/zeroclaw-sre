@@ -66,7 +66,9 @@ RUN set -eux; \
 # ZC_SLACK=0 (the default) nothing below is compiled at all.
 #
 # ZC_FEATURES adds to the crate's default feature set rather than replacing it.
-FROM rust:1.94-slim AS zcsource
+# 0.8.4 declares rust-version = 1.96.1; an older toolchain fails resolution
+# before it compiles anything.
+FROM rust:1.96-slim AS zcsource
 ARG ZC_VERSION=v0.8.4
 ARG ZC_FEATURES=channel-slack
 RUN apt-get update \

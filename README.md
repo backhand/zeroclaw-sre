@@ -24,7 +24,7 @@ deviation and the evidence.
 | **Scheduled sweep** | Every 15 min by default: finds non-Running pods *and* Running-but-crash-looping ones, pulls describe + events + ≤50 log lines, posts one digest to both chat channels. A healthy sweep posts **nothing** — silence is the signal, and a daily heartbeat proves it is alive. |
 | **Alert investigation** | Alertmanager POSTs to a cluster-internal endpoint; the agent checks the alert against live cluster state and reports whether it is real, stale or resolved. |
 | **Rightsizing** | Weekly: compares `kubectl top` against configured requests/limits, posts a proposal table, and waits. Applies `kubectl patch` of the resources block only, after approval, in allowed namespaces only. |
-| **Ticketing** | A finding seen in three consecutive sweeps becomes one GitHub issue. Later sweeps comment on it; they never open a second. |
+| **Ticketing** | A finding seen in three consecutive sweeps becomes one GitHub issue, in the repo that owns that workload. Later sweeps comment on it; they never open a second. When it does not know the repo, it asks in chat once and remembers the answer. |
 | **ChatOps** | Ask "why is prod/api broken?" in Slack or Discord and get an answer from commands run right then, never from memory. |
 
 ---
@@ -119,6 +119,7 @@ cd zeroclaw-sre
 ```bash
 kubectl apply -f deploy/namespace.yaml
 kubectl apply -f deploy/rbac.yaml
+kubectl apply -f deploy/repo-map.yaml
 ```
 
 `deploy/rbac.yaml` grants cluster-wide **read and nothing else**. No write
@@ -152,12 +153,44 @@ kubectl -n zeroclaw-sre create secret generic zeroclaw-sre \
 the pre-seeded gateway bearer, so nothing needs an interactive pairing step.
 Both are pod-internal; generate them once and keep them in your secret store.
 
-### 3. Configure
+### 3. Which repo do tickets go to?
+
+One cluster runs many teams' deployments, so this is per-workload. The agent
+resolves it in order — first hit wins:
+
+1. `sre.zeroclaw/github-repo` annotation on the workload
+2. the same annotation on its namespace
+3. an exact entry in the `zeroclaw-sre-repo-map` ConfigMap
+4. a `namespace/*` wildcard in that ConfigMap
+5. `GH_REPO`, the cluster-wide fallback
+
+Annotate the workload if you own its manifests — the mapping then lives in the
+repo it points at and gets reviewed with the deployment:
+
+```yaml
+metadata:
+  annotations:
+    sre.zeroclaw/github-repo: acme/api-gateway
+```
+
+For anything else, `kubectl apply -f deploy/repo-map.yaml` and either fill the
+map in yourself or let the agent ask. **When nothing resolves, it asks in chat
+which repo to use and records the answer**, so each deployment is asked about
+exactly once. Inspect or correct it any time:
+
+```bash
+kubectl -n zeroclaw-sre get cm zeroclaw-sre-repo-map -o jsonpath='{.data.map\.json}' | jq .
+```
+
+The agent's RBAC grants `get`/`patch` on that one ConfigMap by name and no
+other — it still cannot read configmaps anywhere else in the cluster.
+
+### 4. Configure
 
 Edit `deploy/configmap.yaml` — channel IDs, `ALLOWED_NAMESPACES`, the cron
 schedules, `GH_REPO`. Everything in it is non-secret by construction.
 
-### 4. Deploy
+### 5. Deploy
 
 ```bash
 make deploy
