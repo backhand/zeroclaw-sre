@@ -1,0 +1,65 @@
+# Optional but recommended: without a NetworkPolicy, every pod in the cluster
+# can reach the alert adapter and the gateway. Both are authenticated, but
+# there is no reason for anything except Alertmanager and Prometheus to try.
+#
+# k3s ships Flannel without a NetworkPolicy controller by default — these
+# objects are accepted and silently ignored unless you run one (Calico,
+# Cilium, or k3s started with `--flannel-backend=none` + a CNI that enforces).
+# Check before relying on this: `kubectl get networkpolicy -n zeroclaw-sre`
+# tells you it exists, not that it is enforced.
+#
+# Adjust the namespace selectors to wherever your monitoring stack runs.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: zeroclaw-sre-default-deny-ingress
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zeroclaw-sre
+  policyTypes:
+    - Ingress
+  # No rules = deny all ingress. The allowances below add back exactly two.
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: zeroclaw-sre-allow-alerts-and-metrics
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zeroclaw-sre
+  policyTypes:
+    - Ingress
+  ingress:
+    # Alertmanager -> the adapter.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9099
+    # Prometheus -> /metrics on the gateway port. Note this also exposes
+    # /webhook to the monitoring namespace; it still requires the bearer token
+    # and the webhook secret. Drop this rule if you do not scrape.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 42617
+
+# Egress is intentionally unrestricted: the agent must reach the Kubernetes API
+# server, api.anthropic.com, slack.com, discord.com and api.github.com. Pin
+# those down with an egress policy only if you can enumerate them for your
+# cluster — a half-correct egress policy fails as a silent, intermittent outage.

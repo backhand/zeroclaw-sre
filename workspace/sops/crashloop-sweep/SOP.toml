@@ -1,0 +1,19 @@
+[sop]
+name = "crashloop-sweep"
+description = "Sweep the cluster for unhealthy workloads, gather evidence, and post one digest to Slack and Discord. Posts nothing when everything is healthy."
+version = "1.0.0"
+priority = "normal"
+execution_mode = "supervised"
+agent = "sre"
+# One sweep at a time; a second trigger while one is running is pointless work
+# on the same data, so collapse it onto the run already in flight.
+max_concurrent = 1
+admission_policy = "coalesce"
+# Guards against a wedged agent loop re-triggering every scheduler tick.
+cooldown_secs = 300
+
+# Entered by the `sweep` cron job (see [cron.sweep] in config.toml), which
+# calls sop_execute. A cron trigger here would start a run the headless
+# scheduler cannot execute — see NOTES.md §5.
+[[triggers]]
+type = "manual"

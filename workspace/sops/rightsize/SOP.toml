@@ -1,0 +1,19 @@
+[sop]
+name = "rightsize"
+description = "Compare live pod usage against configured requests/limits and propose kubectl patches. Applies nothing without operator approval."
+version = "1.0.0"
+priority = "normal"
+execution_mode = "supervised"
+agent = "sre"
+# Serialize: two concurrent runs could propose conflicting patches for the same
+# workload, and a run parked at the approval gate must not be lapped by the
+# next schedule.
+max_concurrent = 1
+admission_policy = "hold"
+max_pending_approvals = 1
+cooldown_secs = 3600
+
+# Entered by the `rightsize` cron job via sop_execute, or by an operator asking
+# in chat. See NOTES.md §5.
+[[triggers]]
+type = "manual"

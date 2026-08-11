@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+    # The pod runs as uid 65534 with everything dropped; it satisfies the
+    # restricted profile, so enforce it rather than merely warn.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

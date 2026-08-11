@@ -1,0 +1,24 @@
+# Durable state (FR7): SQLite memory, tool receipts, SOP run state and audit
+# entries, the cron database, and the fingerprint counters that make the
+# escalation ladder work across restarts.
+#
+# ReadWriteOnce and a single replica are not a limitation to work around —
+# SQLite is single-writer, and the Deployment uses the Recreate strategy so two
+# pods never hold this volume at once.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zeroclaw-sre-data
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # Unset = the cluster default StorageClass. On k3s that is local-path, which
+  # pins the pod to one node — acceptable for a single-replica agent. Set it
+  # explicitly if you want the data to survive losing that node.
+  # storageClassName: local-path

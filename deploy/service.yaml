@@ -1,0 +1,66 @@
+# Cluster-internal only. There is no Ingress and there must not be one: the
+# chat channels are outbound (Slack Socket Mode, Discord gateway), so nothing
+# outside the cluster ever needs to reach this pod.
+#
+# Alertmanager receiver snippet (>= 0.27, which can set custom headers):
+#
+#   receivers:
+#     - name: zeroclaw-sre
+#       webhook_configs:
+#         - url: http://zeroclaw-sre.zeroclaw-sre.svc.cluster.local:9099/alerts
+#           send_resolved: true
+#           http_config:
+#             http_headers:
+#               X-Webhook-Secret:
+#                 secret_files: [ /etc/alertmanager/secrets/zc-webhook-secret ]
+#
+# On older Alertmanager, send the same secret as a bearer credential instead:
+#
+#           http_config:
+#             authorization:
+#               type: Bearer
+#               credentials_file: /etc/alertmanager/secrets/zc-webhook-secret
+#
+# Both forms are accepted. See README.md "Wiring Alertmanager".
+apiVersion: v1
+kind: Service
+metadata:
+  name: zeroclaw-sre
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: zeroclaw-sre
+  ports:
+    # The alert adapter. This is the only endpoint any other workload should
+    # talk to.
+    - name: alerts
+      port: 9099
+      targetPort: alerts
+      protocol: TCP
+
+---
+# Separate Service for Prometheus so the gateway port is published under a name
+# that makes its purpose obvious, and so it can be dropped entirely (delete
+# this document) on clusters that do not scrape. /metrics is unauthenticated;
+# /webhook on the same port still requires the bearer token AND the webhook
+# secret. Pair with deploy/networkpolicy.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: zeroclaw-sre-metrics
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: zeroclaw-sre
+  ports:
+    - name: metrics
+      port: 42617
+      targetPort: gateway
+      protocol: TCP

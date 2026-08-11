@@ -1,0 +1,24 @@
+[sop]
+name = "alert-investigate"
+description = "Investigate one Alertmanager alert against live cluster state and post the findings to chat."
+version = "1.0.0"
+priority = "high"
+execution_mode = "supervised"
+agent = "sre"
+# Several distinct alerts may legitimately be in flight at once; each is its
+# own investigation, so admit them in parallel rather than collapsing them.
+max_concurrent = 3
+admission_policy = "parallel"
+cooldown_secs = 0
+
+# Entered by the alert-adapter, which authenticates to the gateway and asks the
+# agent to run this SOP. The webhook trigger below is declarative only: SOP
+# webhook triggers are not fed by any live route in 0.8.x
+# (SopTriggerSource::Webhook => NotYetLive). Keep it so the intent is recorded
+# and so it starts working if upstream wires the route. See NOTES.md §3.
+[[triggers]]
+type = "webhook"
+path = "/sop/alert-investigate"
+
+[[triggers]]
+type = "manual"

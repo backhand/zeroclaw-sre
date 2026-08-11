@@ -1,0 +1,154 @@
+# RBAC is the hard safety boundary for this distribution.
+#
+# The agent's autonomy level, the skill's hard rules and the SOP confirmation
+# gates are all defense in depth: they can be talked around by a sufficiently
+# creative prompt. These verbs cannot. There is no `delete`, no `create`, no
+# `update`, and no access to secrets anywhere below — so no prompt, however
+# clever, can produce one.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zeroclaw-sre
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+automountServiceAccountToken: true
+
+---
+# Cluster-wide READ. Deliberately excludes secrets, configmaps (they routinely
+# carry credentials in practice), and every write verb.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zeroclaw-sre-read
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - pods/status
+      - events
+      - nodes
+      - namespaces
+      - services
+      - endpoints
+      - persistentvolumeclaims
+      - replicationcontrollers
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+
+  # `kubectl top` — metrics-server ships with k3s.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: zeroclaw-sre-read
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zeroclaw-sre-read
+subjects:
+  - kind: ServiceAccount
+    name: zeroclaw-sre
+    namespace: zeroclaw-sre
+
+---
+# The ONLY write the agent can perform anywhere in the cluster.
+#
+# `patch` on workload objects is enough to change a resources block and enough
+# to trigger `kubectl rollout restart` (which patches an annotation). It is not
+# enough to delete anything, create anything, or touch RBAC.
+#
+# It is a ClusterRole so it can be reused, but it is bound with RoleBindings
+# per namespace below — never cluster-wide by default.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zeroclaw-sre-write
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+rules:
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+    verbs: ["patch"]
+
+---
+# One RoleBinding per namespace in ALLOWED_NAMESPACES. This example grants
+# write in `default` only; copy the block per namespace, or generate them:
+#
+#   make rolebindings ALLOWED_NAMESPACES=prod,staging | kubectl apply -f -
+#
+# A namespace with no RoleBinding here is read-only to the agent no matter what
+# ALLOWED_NAMESPACES says — the env var narrows the agent's intent, RBAC
+# decides what is actually possible.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zeroclaw-sre-write
+  namespace: default
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zeroclaw-sre-write
+subjects:
+  - kind: ServiceAccount
+    name: zeroclaw-sre
+    namespace: zeroclaw-sre
+
+# ─────────────────────────────────────────────────────────────────
+# OFF BY DEFAULT: cluster-wide write.
+#
+# Uncommenting this lets the agent patch workload resources in EVERY namespace,
+# including kube-system. Only do this on a cluster where that is genuinely
+# intended, and pair it with a tight ALLOWED_NAMESPACES so the agent does not
+# even try elsewhere. The e2e RBAC negative test (tests/e2e) assumes this stays
+# commented out.
+#
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: ClusterRoleBinding
+# metadata:
+#   name: zeroclaw-sre-write-cluster-wide
+# roleRef:
+#   apiGroup: rbac.authorization.k8s.io
+#   kind: ClusterRole
+#   name: zeroclaw-sre-write
+# subjects:
+#   - kind: ServiceAccount
+#     name: zeroclaw-sre
+#     namespace: zeroclaw-sre

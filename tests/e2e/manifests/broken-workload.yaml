@@ -1,0 +1,48 @@
+# Fixtures the sweep is supposed to notice.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: e2e-apps
+---
+# ImagePullBackOff: the tag does not exist and never will.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-image
+  namespace: e2e-apps
+  labels: { app: broken-image }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: broken-image }
+  template:
+    metadata:
+      labels: { app: broken-image }
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/backhand/zeroclaw-sre-does-not-exist:v0
+          imagePullPolicy: Always
+---
+# CrashLoopBackOff with a distinctive log line the digest should quote.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-crashloop
+  namespace: e2e-apps
+  labels: { app: broken-crashloop }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: broken-crashloop }
+  template:
+    metadata:
+      labels: { app: broken-crashloop }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - 'echo "e2e-marker: connection refused talking to postgres:5432"; exit 1'

@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zeroclaw-sre
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+spec:
+  replicas: 1
+  # SQLite is single-writer and the PVC is ReadWriteOnce: the old pod must be
+  # gone before the new one starts. Never change this to RollingUpdate.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zeroclaw-sre
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zeroclaw-sre
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "42617"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: zeroclaw-sre
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 45   # > ZeroClaw's 30s drain
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        # Makes the PVC and the emptyDirs writable by uid 65534.
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        # ── The agent ────────────────────────────────────────────
+        - name: zeroclaw
+          # Pin a digest at release time; CI rewrites this line on tag.
+          image: ghcr.io/backhand/zeroclaw-sre:v0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: gateway
+              containerPort: 42617
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: zeroclaw-sre
+            - secretRef:
+                name: zeroclaw-sre
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+          # /health is unauthenticated by design, so probes need no credentials.
+          startupProbe:
+            httpGet: { path: /health, port: gateway }
+            periodSeconds: 5
+            failureThreshold: 24      # up to 2 min for first boot + workspace sync
+          readinessProbe:
+            httpGet: { path: /health, port: gateway }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: gateway }
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+        # ── Alertmanager -> gateway bridge ───────────────────────
+        # Separate container, not a background process in the entrypoint, so it
+        # gets its own probe and its own restart without taking the agent down.
+        # It is the only port this pod publishes to the cluster.
+        - name: alert-adapter
+          image: ghcr.io/backhand/zeroclaw-sre:v0.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/alert-adapter"]
+          ports:
+            - name: alerts
+              containerPort: 9099
+              protocol: TCP
+          env:
+            - name: ZC_GATEWAY_URL
+              value: http://127.0.0.1:42617
+            - name: ALERT_ADAPTER_PORT
+              value: "9099"
+            - name: ZC_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef: { name: zeroclaw-sre, key: ZC_WEBHOOK_SECRET }
+            - name: ZC_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef: { name: zeroclaw-sre, key: ZC_GATEWAY_TOKEN }
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
+          # /healthz reports ready only once the agent's gateway answers, so
+          # Alertmanager never posts to a pod that cannot investigate.
+          readinessProbe:
+            httpGet: { path: /healthz, port: alerts }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: alerts }
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: zeroclaw-sre-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi

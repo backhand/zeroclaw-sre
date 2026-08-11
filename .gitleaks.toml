@@ -1,0 +1,30 @@
+title = "zeroclaw-k3s-sre"
+
+[extend]
+useDefault = true
+
+# Placeholders and documentation examples. Each is either an obvious dummy or a
+# path that exists to *show* where a credential goes without carrying one.
+[[rules]]
+id = "zeroclaw-sre-placeholder-allowlist"
+description = "Documented placeholders, not credentials"
+regex = '''REPLACE_ME|selftest|e2e-placeholder|xoxb-e2e|xapp-e2e'''
+keywords = ["REPLACE_ME"]
+
+[allowlist]
+description = "Files that legitimately mention credential shapes"
+paths = [
+  '''deploy/secret\.example\.yaml''',
+  '''README\.md''',
+  '''NOTES\.md''',
+  '''zeroclaw-k3s-sre-spec\.md''',
+  '''tests/e2e/.*''',
+  '''workspace/skills/k3s-admin/TEST\.sh''',
+  '''Makefile''',
+  '''\.gitleaks\.toml''',
+]
+regexes = [
+  '''sk-ant-REPLACE_ME''',
+  '''xox[baprs]-REPLACE_ME''',
+  '''REPLACE_ME_32_BYTES_HEX''',
+]

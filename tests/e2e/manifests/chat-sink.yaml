@@ -1,0 +1,85 @@
+# A stand-in for Slack and Discord.
+#
+# The agent's outbound chat in CI is routed to ZeroClaw's generic webhook
+# channel instead of the real platforms (env overrides in run.sh), and that
+# channel POSTs every outbound message here. Assertions in the cases then run
+# against what the agent actually tried to send — which is what the spec asks
+# for when live tokens are unavailable.
+#
+# It doubles as the suite's in-cluster HTTP client: `kubectl exec` into it to
+# reach the adapter Service without leaving the cluster network.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: e2e-sink
+  labels:
+    # Alertmanager's stand-in lives here, so the NetworkPolicy example's
+    # monitoring selector is satisfied when policies are enforced.
+    kubernetes.io/metadata.name: e2e-sink
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chat-sink
+  namespace: e2e-sink
+data:
+  sink.sh: |
+    #!/bin/sh
+    # Append every POST body to /tmp/messages.ndjson, answer 200.
+    set -eu
+    : > /tmp/messages.ndjson
+    while true; do
+      # busybox nc, one request at a time — this only has to survive a test run.
+      printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\n{}' \
+        | nc -l -p 8080 2>/dev/null \
+        | (
+            # Skip headers, keep the body, and record it as one line.
+            while IFS= read -r line; do
+              line="$(printf '%s' "$line" | tr -d '\r')"
+              [ -z "$line" ] && break
+            done
+            body="$(cat)"
+            [ -n "$body" ] && printf '%s\n' "$body" >> /tmp/messages.ndjson
+          ) || true
+    done
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat-sink
+  namespace: e2e-sink
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: chat-sink }
+  template:
+    metadata:
+      labels: { app: chat-sink }
+    spec:
+      containers:
+        - name: sink
+          image: busybox:1.36
+          command: ["sh", "/scripts/sink.sh"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            periodSeconds: 5
+      volumes:
+        - name: scripts
+          configMap:
+            name: chat-sink
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-sink
+  namespace: e2e-sink
+spec:
+  selector: { app: chat-sink }
+  ports:
+    - port: 8080
+      targetPort: 8080

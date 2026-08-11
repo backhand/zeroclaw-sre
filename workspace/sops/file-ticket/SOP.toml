@@ -1,0 +1,17 @@
+[sop]
+name = "file-ticket"
+description = "Open or update a de-duplicated GitHub issue for a persistent cluster finding."
+version = "1.0.0"
+priority = "normal"
+execution_mode = "supervised"
+agent = "sre"
+# Serialize so two findings racing to file cannot both miss the other's issue
+# and open duplicates.
+max_concurrent = 1
+admission_policy = "hold"
+cooldown_secs = 0
+
+# Invoked by crashloop-sweep (3rd consecutive sweep) or by an operator
+# escalating in chat.
+[[triggers]]
+type = "manual"

@@ -1,0 +1,65 @@
+name: release
+
+# Spec §10.3: build and push the multi-arch image on a version tag, then pin
+# its digest into deploy/deployment.yaml so what is deployed is exactly what
+# was tested — a tag alone is mutable, a digest is not.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write     # to push the digest-pin commit
+  packages: write     # to push to ghcr.io
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve version
+        id: v
+        run: |
+          version="${{ inputs.version || github.ref_name }}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # k3s runs on ARM as often as on x86; both architectures are first class.
+      - name: Build and push linux/amd64 + linux/arm64
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag ghcr.io/${{ github.repository }}:${{ steps.v.outputs.version }} \
+            --tag ghcr.io/${{ github.repository }}:latest \
+            --push .
+
+      - name: Pin the digest into deploy/deployment.yaml
+        run: |
+          ref="ghcr.io/${{ github.repository }}:${{ steps.v.outputs.version }}"
+          digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
+          echo "digest: $digest"
+          sed -i -E "s|image: ghcr.io/[^ ]*zeroclaw-sre[^ ]*|image: ghcr.io/${{ github.repository }}@${digest}|g" \
+            deploy/deployment.yaml
+          git --no-pager diff deploy/deployment.yaml
+
+      - name: Commit the pin
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/deployment.yaml
+          git commit -m "release: pin ${{ steps.v.outputs.version }} image digest" || exit 0
+          git push origin HEAD:main

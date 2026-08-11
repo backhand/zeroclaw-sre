@@ -1,0 +1,55 @@
+# Non-secret tunables. Everything here ends up in the rendered config.toml, so
+# it is safe to read, diff and review — nothing confidential belongs in this
+# file. Credentials live in the Secret (deploy/secret.example.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zeroclaw-sre
+  namespace: zeroclaw-sre
+  labels:
+    app.kubernetes.io/name: zeroclaw-sre
+data:
+  # ── Chat targets ───────────────────────────────────────────────
+  # Slack channel IDs the agent listens in. The first one receives the sweep
+  # digest unless SLACK_DIGEST_CHANNEL says otherwise.
+  SLACK_CHANNEL_IDS: "C0000000000"
+  SLACK_DIGEST_CHANNEL: ""
+
+  # Discord guild the bot is restricted to, and the channels it watches.
+  DISCORD_GUILD_ID: "000000000000000000"
+  DISCORD_CHANNEL_IDS: "000000000000000000"
+  DISCORD_DIGEST_CHANNEL: ""
+
+  # Operator IDs allowed to approve mutations and ask questions. Slack user IDs
+  # (U…) and Discord user IDs respectively; ZC_ALLOWED_USERS sets both at once.
+  # Leaving this empty means nobody can approve a rightsizing patch.
+  ZC_ALLOWED_USERS: ""
+  # ZC_ALLOWED_USERS_SLACK: "U0000000000"
+  # ZC_ALLOWED_USERS_DISCORD: "000000000000000000"
+
+  # ── Scope ──────────────────────────────────────────────────────
+  # Comma-separated namespaces the agent may WRITE to. Empty = read-only
+  # everywhere. Must match the RoleBindings in deploy/rbac.yaml: this variable
+  # narrows intent, RBAC decides what is possible.
+  ALLOWED_NAMESPACES: "default"
+
+  # ── Schedules (5-field cron, UTC) ──────────────────────────────
+  SWEEP_CRON: "*/15 * * * *"
+  RIGHTSIZE_CRON: "0 6 * * 1"
+  HEARTBEAT_CRON: "0 7 * * *"
+
+  # ── Model ──────────────────────────────────────────────────────
+  ZC_MODEL: "claude-sonnet-4-5"
+
+  # ── Ticketing ──────────────────────────────────────────────────
+  # owner/repo for FR4. Needs GH_TOKEN in the Secret to take effect.
+  GH_REPO: ""
+
+  # ── Sandbox ────────────────────────────────────────────────────
+  # "none" in-cluster: ZeroClaw's landlock backend allowlists only the
+  # workspace, /tmp and the system dirs, which would cut kubectl off from the
+  # projected ServiceAccount token and break in-cluster auth entirely. The
+  # container itself (non-root, read-only rootfs, dropped caps, RuntimeDefault
+  # seccomp) plus RBAC is the isolation boundary. See NOTES.md §6 before
+  # changing this to "landlock".
+  ZC_SANDBOX_BACKEND: "none"

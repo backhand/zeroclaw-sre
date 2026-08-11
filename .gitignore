@@ -1,0 +1,16 @@
+# Build scratch
+.build/
+*.bak
+
+# Never commit a filled-in secret. secret.example.yaml (placeholders only) is
+# tracked deliberately; anything else matching these names is not.
+deploy/secret.yaml
+deploy/secret.*.yaml
+!deploy/secret.example.yaml
+*.env
+.env
+kubeconfig
+*.kubeconfig
+
+# Rendered config — only ever produced at runtime or by `make render-check`.
+config/config.toml

@@ -1,0 +1,245 @@
+# zeroclaw-k3s-sre — configuration template
+#
+# Rendered by entrypoint.sh with `envsubst` into $ZEROCLAW_CONFIG_DIR/config.toml
+# at container start. NOTHING SECRET IS SUBSTITUTED HERE.
+#
+# Every credential (LLM key, Slack tokens, Discord token, gateway bearer,
+# webhook secret) is injected into the in-memory Config by ZeroClaw's
+# ZEROCLAW_<dotted__path> env-override layer, which never writes to disk.
+# See NOTES.md §2 and deploy/secret.example.yaml for the exact variable names.
+#
+# Only these placeholders are substituted (all non-secret):
+#   ZC_MODEL ZC_DATA_DIR ZC_WORKSPACE_DIR ZC_SANDBOX_BACKEND
+#   SLACK_CHANNEL_IDS_TOML SLACK_DIGEST_CHANNEL
+#   DISCORD_GUILD_IDS_TOML DISCORD_CHANNEL_IDS_TOML DISCORD_DIGEST_CHANNEL
+#   ZC_ALLOWED_USERS_SLACK_TOML ZC_ALLOWED_USERS_DISCORD_TOML
+#   SWEEP_CRON RIGHTSIZE_CRON HEARTBEAT_CRON
+#   ALLOWED_NAMESPACES GH_REPO ZC_WEBHOOK_PORT
+
+schema_version = 3
+
+# ── Model provider ───────────────────────────────────────────────
+# api_key arrives as ZEROCLAW_providers__models__anthropic__sre__api_key.
+[providers.models.anthropic.sre]
+model = "${ZC_MODEL}"
+temperature = 0.0
+
+# ── Risk profile (autonomy) ──────────────────────────────────────
+# `supervised`: low-risk tool calls run, medium-risk ones ask in chat,
+# high-risk ones are blocked. RBAC (deploy/rbac.yaml) is the hard boundary;
+# this is defense in depth.
+[risk_profiles.sre]
+level = "supervised"
+workspace_only = false
+require_approval_for_medium_risk = true
+block_high_risk_commands = true
+# Strict allowlist: anything not named here is refused by the shell policy.
+allowed_commands = [
+  "kubectl", "gh", "jq", "sh", "curl",
+  "echo", "date", "grep", "head", "tail", "sort", "uniq", "wc", "cut", "tr", "awk",
+]
+# The agent's *file* tools may not read these; kubectl still authenticates
+# from the projected ServiceAccount token because the sandbox is disabled
+# in-cluster (NOTES.md §6) and path policy applies to tool arguments, not to
+# a subprocess's own opens.
+forbidden_paths = [
+  "/etc", "/sys", "/boot", "/proc",
+  "/var/run/secrets", "/run/secrets",
+  "~/.ssh", "~/.aws", "~/.kube",
+]
+shell_env_passthrough = [
+  "PATH", "HOME", "LANG",
+  "KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT",
+  "GH_TOKEN", "GH_REPO", "ALLOWED_NAMESPACES", "SWEEP_STATE_DIR",
+]
+# Reads run unattended; every mutation is gated by the SOP step instead.
+auto_approve = [
+  "file_read", "memory_recall", "memory_store", "glob_search", "content_search",
+  "tool_search", "sop_status", "sop_advance",
+]
+always_ask = ["file_write", "file_edit"]
+sandbox_backend = "${ZC_SANDBOX_BACKEND}"
+
+# ── Runtime profile ──────────────────────────────────────────────
+[runtime_profiles.sre]
+agentic = true
+max_tool_iterations = 40
+max_tool_result_chars = 12000
+shell_timeout_secs = 60
+
+# ── Skills ───────────────────────────────────────────────────────
+# Absolute on purpose: a relative bundle directory resolves against the install
+# root, not the agent workspace, which would look in the wrong place.
+[skill_bundles.k3s]
+directory = "${ZC_WORKSPACE_DIR}/skills"
+
+[skills]
+# TEST.sh must be runnable for `zeroclaw skills test k3s-admin` to mean anything.
+allow_scripts = true
+open_skills_enabled = false
+prompt_injection_mode = "full"
+
+# ── The agent ────────────────────────────────────────────────────
+[agents.sre]
+enabled = true
+model_provider = "anthropic.sre"
+risk_profile = "sre"
+runtime_profile = "sre"
+channels = ["slack.ops", "discord.ops"]
+skill_bundles = ["k3s"]
+cron_jobs = ["sweep", "rightsize", "heartbeat"]
+
+[agents.sre.workspace]
+path = "${ZC_WORKSPACE_DIR}"
+
+[agents.sre.memory]
+backend = "sqlite"
+
+# ── Channels ─────────────────────────────────────────────────────
+# Slack over Socket Mode: bot_token + app_token, no public URL, no signing
+# secret (see NOTES.md §4 — 0.8.x SlackConfig has no signing_secret field).
+[channels.slack.ops]
+enabled = true
+channel_ids = [${SLACK_CHANNEL_IDS_TOML}]
+mention_only = true
+thread_replies = true
+stream_drafts = true
+
+# Discord over its outbound gateway.
+[channels.discord.ops]
+enabled = true
+guild_ids = [${DISCORD_GUILD_IDS_TOML}]
+channel_ids = [${DISCORD_CHANNEL_IDS_TOML}]
+mention_only = true
+listen_to_bots = false
+
+# Not a listener. This block exists solely so the gateway picks up
+# `secret` and enforces `X-Webhook-Secret` on POST /webhook
+# (zeroclaw-gateway/src/lib.rs: config.channels.webhook.values().next()).
+# The secret arrives as ZEROCLAW_channels__webhook__alerts__secret.
+[channels.webhook.alerts]
+enabled = false
+port = ${ZC_WEBHOOK_PORT}
+
+# ── Operator roster ──────────────────────────────────────────────
+# 0.8.x dropped per-channel `allowed_users`; the operator roster that may
+# approve mutations is the peer group's `external_peers` (NOTES.md §4).
+[peer_groups.ops_slack]
+channel = "slack.ops"
+agents = ["sre"]
+external_peers = [${ZC_ALLOWED_USERS_SLACK_TOML}]
+
+[peer_groups.ops_discord]
+channel = "discord.ops"
+agents = ["sre"]
+external_peers = [${ZC_ALLOWED_USERS_DISCORD_TOML}]
+
+# ── Scheduled work ───────────────────────────────────────────────
+# SOP cron triggers start a run but cannot execute steps headlessly (no agent
+# loop on the scheduler tick), so the schedule lives here as an *agent* job
+# that enters the SOP through the `sop_execute` tool. NOTES.md §5.
+[scheduler]
+enabled = true
+catch_up_on_startup = false
+
+[cron.sweep]
+name = "k3s health sweep"
+job_type = "agent"
+schedule = { kind = "cron", expr = "${SWEEP_CRON}" }
+uses_memory = true
+session_target = "isolated"
+prompt = """
+Run the crashloop-sweep SOP now: call sop_execute with name "crashloop-sweep" and follow its steps.
+Namespaces in scope: ${ALLOWED_NAMESPACES}.
+Silence means healthy: if every pod in scope is Running or Succeeded, post nothing at all and reply exactly SWEEP_CLEAN.
+"""
+
+[cron.sweep.delivery]
+mode = "announce"
+channel = "slack.ops"
+to = "${SLACK_DIGEST_CHANNEL}"
+best_effort = true
+
+[cron.rightsize]
+name = "k3s rightsizing proposal"
+job_type = "agent"
+schedule = { kind = "cron", expr = "${RIGHTSIZE_CRON}" }
+uses_memory = true
+session_target = "isolated"
+prompt = """
+Run the rightsize SOP now: call sop_execute with name "rightsize" and follow its steps.
+Namespaces in scope: ${ALLOWED_NAMESPACES}.
+Stop at the approval gate. Never patch anything before an operator approves in chat.
+"""
+
+[cron.rightsize.delivery]
+mode = "announce"
+channel = "slack.ops"
+to = "${SLACK_DIGEST_CHANNEL}"
+best_effort = true
+
+[cron.heartbeat]
+name = "daily liveness heartbeat"
+job_type = "agent"
+schedule = { kind = "cron", expr = "${HEARTBEAT_CRON}" }
+uses_memory = false
+session_target = "isolated"
+prompt = """
+Post the daily heartbeat. Run `kubectl get nodes --no-headers | wc -l` and
+`kubectl get pods --all-namespaces --no-headers | wc -l`, then post ONE line to
+Slack and, with send_via(target: "discord.ops", body: <same line>), to Discord:
+"heartbeat OK — <n> nodes, <n> pods, sweeps running, last finding: <fingerprint or none>".
+Do not investigate anything. Do not open tickets.
+"""
+
+[cron.heartbeat.delivery]
+mode = "announce"
+channel = "slack.ops"
+to = "${SLACK_DIGEST_CHANNEL}"
+best_effort = true
+
+# ── SOPs ─────────────────────────────────────────────────────────
+[sop]
+sops_dir = "${ZC_WORKSPACE_DIR}/sops"
+default_execution_mode = "supervised"
+max_concurrent_total = 2
+approval_timeout_secs = 1800
+approval_timeout_action = "escalate"
+persist_runs = true
+run_store_backend = "sqlite"
+untrusted_input_guard = "warn"
+untrusted_outbound_redact = true
+
+# ── Gateway ──────────────────────────────────────────────────────
+# Binds 0.0.0.0 because kubelet probes hit the pod IP. The Service publishes
+# only the alert-adapter port; 42617 is never exposed outside the pod.
+# `paired_tokens` is pre-seeded from ZEROCLAW_gateway__paired_tokens so the
+# adapter can authenticate without an interactive `POST /pair`. NOTES.md §3.
+[gateway]
+host = "0.0.0.0"
+port = 42617
+allow_public_bind = true
+require_pairing = true
+allow_remote_admin = false
+check_updates = false
+allow_self_upgrade = false
+webhook_rate_limit_per_minute = 120
+idempotency_ttl_secs = 900
+
+# ── State ────────────────────────────────────────────────────────
+[memory]
+backend = "sqlite"
+auto_save = true
+audit_enabled = true
+
+[secrets]
+# The encrypted store is unused: no credential is ever written to config.toml,
+# so there is nothing to encrypt and no key file to back up or lose.
+encrypt = false
+
+[observability]
+backend = "prometheus"
+log_tool_io = true
+
+[heartbeat]
+enabled = false
