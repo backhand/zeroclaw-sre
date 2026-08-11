@@ -80,8 +80,19 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends pkg-config git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+# Local patches, applied to the pinned upstream tag. This is deliberately not a
+# fork: a fork means tracking all of upstream forever, while a patch tracks only
+# what we changed — and `git apply` failing on a version bump is exactly the
+# signal you want, rather than a silent merge. Each patch should also be an
+# upstream PR; delete it here once merged.
+COPY patches/ /patches/
 RUN git clone --depth 1 --branch "${ZC_VERSION}" \
       https://github.com/zeroclaw-labs/zeroclaw.git . \
+ && for p in /patches/*.patch; do \
+      [ -e "$p" ] || continue; \
+      echo "applying $(basename "$p")"; \
+      git apply --verbose "$p" || { echo "PATCH FAILED against ${ZC_VERSION}: $p" >&2; exit 1; }; \
+    done \
  && cargo build --release --locked --features "${ZC_FEATURES}" \
  && install -D -m 0755 target/release/zeroclaw /usr/local/bin/zeroclaw \
  && zeroclaw --version

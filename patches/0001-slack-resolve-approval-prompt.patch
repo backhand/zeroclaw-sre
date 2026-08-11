@@ -1,0 +1,78 @@
+diff --git a/crates/zeroclaw-channels/src/slack.rs b/crates/zeroclaw-channels/src/slack.rs
+index 15d56df..2b7b5af 100644
+--- a/crates/zeroclaw-channels/src/slack.rs
++++ b/crates/zeroclaw-channels/src/slack.rs
+@@ -3561,10 +3561,73 @@ impl SlackChannel {
+                     if let Some((token, response)) =
+                         Self::try_parse_approval_block_action(&envelope)
+                     {
++                        let decided = response.clone();
+                         let mut map = self.pending_approvals.lock().await;
+                         if let Some(sender) = map.remove(&token) {
+                             let _ = sender.send(response);
+                         }
++                        drop(map);
++
++                        // Rewrite the prompt in place. Without this the buttons
++                        // stay live after a decision, so an answered request is
++                        // indistinguishable from an unanswered one and invites a
++                        // second click. `blocks: []` is required — chat.update
++                        // keeps the existing blocks when only `text` is given,
++                        // which would leave the buttons exactly where they were.
++                        if let Some(payload) = envelope.get("payload") {
++                            let channel = payload
++                                .get("channel")
++                                .and_then(|c| c.get("id"))
++                                .and_then(|v| v.as_str());
++                            let ts = payload
++                                .get("message")
++                                .and_then(|m| m.get("ts"))
++                                .or_else(|| {
++                                    payload.get("container").and_then(|c| c.get("message_ts"))
++                                })
++                                .and_then(|v| v.as_str());
++                            let who = payload
++                                .get("user")
++                                .and_then(|u| {
++                                    u.get("username").or_else(|| u.get("name")).or_else(|| u.get("id"))
++                                })
++                                .and_then(|v| v.as_str())
++                                .unwrap_or("an operator");
++                            if let (Some(channel), Some(ts)) = (channel, ts) {
++                                let verdict = match decided {
++                                    ChannelApprovalResponse::Approve => "approved",
++                                    ChannelApprovalResponse::Deny => "denied",
++                                    ChannelApprovalResponse::AlwaysApprove => {
++                                        "approved (always)"
++                                    }
++                                    _ => "answered",
++                                };
++                                let body = serde_json::json!({
++                                    "channel": channel,
++                                    "ts": ts,
++                                    "text": format!("Request `{token}` {verdict} by {who}."),
++                                    "blocks": [],
++                                });
++                                if let Err(e) = self
++                                    .http_client()
++                                    .post("https://slack.com/api/chat.update")
++                                    .bearer_auth(&self.bot_token)
++                                    .json(&body)
++                                    .send()
++                                    .await
++                                {
++                                    ::zeroclaw_log::record!(
++                                        WARN,
++                                        ::zeroclaw_log::Event::new(
++                                            module_path!(),
++                                            ::zeroclaw_log::Action::Note
++                                        )
++                                        .with_outcome(::zeroclaw_log::EventOutcome::Failure),
++                                        format!("approval prompt update failed: {e}")
++                                    );
++                                }
++                            }
++                        }
+                         continue;
+                     }
+                     if let Some(msg) =

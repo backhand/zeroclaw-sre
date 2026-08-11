@@ -36,7 +36,19 @@ temperature = 0.0
 [risk_profiles.sre]
 level = "supervised"
 workspace_only = false
-require_approval_for_medium_risk = true
+# Medium-risk tools run without asking. Enumerating them instead does not work:
+# the agent reaches for cron_list, http_request, web_search_tool, git_forge and
+# more as it investigates, and every tool missing from the allowlist becomes an
+# approval card that buries the channel. Whack-a-mole with a list that is wrong
+# again the next time the model picks a different tool.
+#
+# What still gates the things that matter:
+#   - block_high_risk_commands below: unknown shell commands are refused, not asked;
+#   - always_ask below: file writes always prompt;
+#   - requires_confirmation on every mutating SOP step: rightsize, release and
+#     prune cannot change anything without an operator approving in chat;
+#   - RBAC, which no prompt can talk its way past.
+require_approval_for_medium_risk = false
 block_high_risk_commands = true
 # Strict allowlist: anything not named here is refused by the shell policy.
 allowed_commands = [
@@ -57,25 +69,9 @@ shell_env_passthrough = [
   "KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT",
   "GH_TOKEN", "GH_REPO", "ALLOWED_NAMESPACES", "SWEEP_STATE_DIR",
 ]
-# What runs without asking.
-#
-# The premise of this distribution is a sweep that investigates on a schedule
-# with nobody watching — so cluster *reads* have to run unattended, and they
-# already do on the cron path. Gating the same reads only when a human happens
-# to be in the conversation is inconsistent and makes the agent unusable in
-# chat: every `kubectl get`, every emoji acknowledgement, every SOP lookup
-# becomes a button to click.
-#
-# `shell` is in this list, which is the consequential entry. What still stops
-# it doing damage:
-#   - allowed_commands above is a strict allowlist;
-#   - RBAC has no destructive verb and no access to secrets (deploy/rbac.yaml);
-#   - the only writable namespaces are ALLOWED_NAMESPACES, bound explicitly;
-#   - every mutating SOP step carries requires_confirmation, so rightsizing
-#     still cannot patch anything without an operator approving in chat.
-#
-# If you want the stricter posture, remove "shell" here: the agent then asks
-# before each command, which is safe, noisy, and slow. NOTES.md §18.
+# Explicitly always-allowed, regardless of how a tool is classified. Mostly
+# redundant now that medium-risk runs unattended, but it states the intent and
+# survives a reclassification upstream. NOTES.md §18.
 auto_approve = [
   # cluster inspection
   "shell",
