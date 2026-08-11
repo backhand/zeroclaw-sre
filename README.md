@@ -38,7 +38,14 @@ deviation and the evidence.
 - **An LLM API key.** Anthropic by default; any provider family ZeroClaw
   supports works — set `ZC_PROVIDER_FAMILY` and `ZC_MODEL` in the ConfigMap
   (e.g. `xai` + `grok-4.5`).
-- **A Slack app** and **a Discord bot** (below).
+- **A Discord bot** and/or **a Slack app** (below). Either one is enough;
+  configure both if you want the digest in both places.
+
+  > **Slack needs a source build.** No published ZeroClaw image compiles the
+  > Slack channel — the binary reports `🚫 Slack (configured, not compiled)`.
+  > Build with `docker build --build-arg ZC_SLACK=1 .` (a full Rust build:
+  > ~2 GB RAM, tens of minutes). Discord works on the default image.
+  > See [NOTES.md §14](NOTES.md).
 - Optional: a **GitHub token** for ticket filing, and **Alertmanager** for the
   alert path.
 
@@ -114,9 +121,8 @@ kubectl apply -f deploy/namespace.yaml
 kubectl apply -f deploy/rbac.yaml
 ```
 
-`deploy/rbac.yaml` grants cluster-wide **read** and namespaced **patch** on
-workloads. The example binds write in `default`; generate bindings for your own
-namespaces instead:
+`deploy/rbac.yaml` grants cluster-wide **read and nothing else**. No write
+binding ships with it, on purpose. Grant write per namespace when you want it:
 
 ```bash
 make rolebindings ALLOWED_NAMESPACES=prod,staging | kubectl apply -f -

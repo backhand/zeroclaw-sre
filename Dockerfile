@@ -9,6 +9,11 @@
 #
 #   docker buildx build --platform linux/amd64,linux/arm64 -t <ref> .
 
+# Set ZC_SLACK=1 to build ZeroClaw from source with the Slack channel compiled
+# in. Declared here because it is interpolated into a FROM line below, which
+# puts it in the global (pre-stage) ARG scope.
+ARG ZC_SLACK=0
+
 # ── Stage 0: the Alertmanager adapter ────────────────────────────
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS adapter
 ARG TARGETARCH
@@ -46,6 +51,42 @@ RUN set -eux; \
     /out/kubectl version --client=true; \
     /out/gh --version
 
+# ── Stage 1b: ZeroClaw from source (opt-in) ──────────────────────
+# NEEDED FOR SLACK. No published ZeroClaw image compiles the Slack channel —
+# `zeroclaw channel list` in both `:latest` and `:debian` reports
+# "🚫 Slack (configured, not compiled)". Discord, webhook and CLI are in;
+# Slack is not. See NOTES.md §14.
+#
+# This stage is skipped entirely unless you ask for it, because it is a full
+# Rust build (~2 GB RAM, tens of minutes) against a ~10s image pull:
+#
+#   docker build --build-arg ZC_SLACK=1 .
+#
+# BuildKit only builds the stage that `zcbin` actually resolves to, so with
+# ZC_SLACK=0 (the default) nothing below is compiled at all.
+#
+# ZC_FEATURES adds to the crate's default feature set rather than replacing it.
+FROM rust:1.94-slim AS zcsource
+ARG ZC_VERSION=v0.8.4
+ARG ZC_FEATURES=channel-slack
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends pkg-config git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git clone --depth 1 --branch "${ZC_VERSION}" \
+      https://github.com/zeroclaw-labs/zeroclaw.git . \
+ && cargo build --release --locked --features "${ZC_FEATURES}" \
+ && install -D -m 0755 target/release/zeroclaw /usr/local/bin/zeroclaw \
+ && zeroclaw --version
+
+# ── Stage 1c: pick which zeroclaw binary the runtime gets ────────
+# `zcbin-0` is the published binary, `zcbin-1` the source build. The runtime
+# copies from `zcbin`, which resolves to one or the other — the unselected
+# stage is never built.
+FROM ghcr.io/zeroclaw-labs/zeroclaw:debian@sha256:d2b3ac2e6b6dd3b0d977b3722fea8bc5ba414c2d5c34d48fe42838aac217afa5 AS zcbin-0
+FROM zcsource AS zcbin-1
+FROM zcbin-${ZC_SLACK} AS zcbin
+
 # ── Stage 2: runtime ─────────────────────────────────────────────
 FROM ghcr.io/zeroclaw-labs/zeroclaw:debian@sha256:d2b3ac2e6b6dd3b0d977b3722fea8bc5ba414c2d5c34d48fe42838aac217afa5 AS runtime
 
@@ -60,6 +101,9 @@ RUN set -eux; \
         jq \
         tini; \
     rm -rf /var/lib/apt/lists/*
+
+# Either the published binary or the source build, per ZC_SLACK.
+COPY --from=zcbin /usr/local/bin/zeroclaw /usr/local/bin/zeroclaw
 
 COPY --from=tools    /out/kubectl       /usr/local/bin/kubectl
 COPY --from=tools    /out/gh            /usr/local/bin/gh

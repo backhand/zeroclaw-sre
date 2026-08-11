@@ -421,6 +421,61 @@ long-running-route budget, with the adapter's client timeout aligned to it.
 
 ---
 
+## 14. No published ZeroClaw image compiles the Slack channel
+
+`channel-slack` is in the crate's default feature set, but the *published
+images* are not built with it. Both tags say so themselves — configure a Slack
+block and run `zeroclaw channel list`:
+
+```
+  ✅ Discord
+  Configured but not compiled in this binary:
+  🚫 Slack (configured, not compiled)
+  Build from source with `./install.sh --source --preset full`,
+  `--features channels-full`, or the specific `channel-*` feature.
+```
+
+Verified on `ghcr.io/zeroclaw-labs/zeroclaw:latest` **and** `:debian`, both at
+0.8.4. Discord, webhook and CLI are compiled in; Slack is not.
+
+The failure mode is quiet, which is what makes it expensive: the config
+validates, `zeroclaw doctor` reports "at least one channel configured", the
+bot token and app-level token both authenticate against Slack's API
+(`auth.test` and `apps.connections.open` succeed), `/health` is green — and no
+Slack channel ever connects. The only visible symptom is the absence of the
+channel-server banner in the logs.
+
+**Deviation:** the Dockerfile gained an opt-in source-build stage.
+
+```bash
+docker build --build-arg ZC_SLACK=1 .          # Slack compiled in
+docker build .                                 # default: published binary
+```
+
+`zcbin-0` (published) and `zcbin-1` (source) are alternative stages selected by
+`FROM zcbin-${ZC_SLACK}`, so with the default the Rust toolchain is never even
+pulled — a `COPY --from` on the source stage would have forced a full compile on
+every build. The cost when you do opt in is real: a full workspace build, ~2 GB
+RAM, tens of minutes.
+
+Discord needs none of this and works on the published image today.
+
+---
+
+## 15. The shipped RBAC no longer grants write anywhere
+
+`deploy/rbac.yaml` used to include a RoleBinding for the `default` namespace as
+an "example". Applying the file therefore granted the agent patch rights on
+`default` to anyone who did not read it first — and the e2e RBAC case caught
+exactly that, failing on "patching workloads in default was NOT denied".
+
+The binding is gone. Applying `deploy/rbac.yaml` now grants cluster-wide read
+and nothing else; write is opt-in per namespace via
+`make rolebindings ALLOWED_NAMESPACES=…`. Read-only is the right default for a
+distribution other people deploy.
+
+---
+
 ## 10. Open questions for the operator
 
 1. **kubectl skew.** Pinned to `v1.36.3` to match current stable k3s

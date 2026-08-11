@@ -106,29 +106,20 @@ rules:
     verbs: ["patch"]
 
 ---
-# One RoleBinding per namespace in ALLOWED_NAMESPACES. This example grants
-# write in `default` only; copy the block per namespace, or generate them:
+# NO WRITE BINDING SHIPS BY DEFAULT.
+#
+# Applying this file gives the agent cluster-wide *read* and nothing else. That
+# is deliberate: a RoleBinding in here would silently grant write on whichever
+# namespace the example happened to name (it used to name `default`) to anyone
+# who ran `kubectl apply -f deploy/rbac.yaml` without reading it.
+#
+# Grant write explicitly, per namespace, when you actually want it:
 #
 #   make rolebindings ALLOWED_NAMESPACES=prod,staging | kubectl apply -f -
 #
-# A namespace with no RoleBinding here is read-only to the agent no matter what
-# ALLOWED_NAMESPACES says — the env var narrows the agent's intent, RBAC
-# decides what is actually possible.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: zeroclaw-sre-write
-  namespace: default
-  labels:
-    app.kubernetes.io/name: zeroclaw-sre
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: zeroclaw-sre-write
-subjects:
-  - kind: ServiceAccount
-    name: zeroclaw-sre
-    namespace: zeroclaw-sre
+# and set the same list in ALLOWED_NAMESPACES so the agent's intent matches
+# what RBAC permits. A namespace with no RoleBinding stays read-only no matter
+# what that variable says.
 
 # ─────────────────────────────────────────────────────────────────
 # OFF BY DEFAULT: cluster-wide write.
