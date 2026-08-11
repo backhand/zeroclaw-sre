@@ -54,16 +54,36 @@ fi
 
 # The rendered config lives on the PVC (it has to: ZeroClaw has one install
 # root and all durable state hangs off it), so what matters is that it carries
-# no credentials at all. See NOTES.md §2.
-rendered="$(in_agent cat /data/config.toml)"
+# no credential *values*. See NOTES.md §2.
+#
+# Comments are stripped first: the template deliberately documents which env
+# var feeds `api_key`, `bot_token` and `paired_tokens`, and matching that prose
+# would fail on the explanation rather than on a secret.
+rendered="$(in_agent cat /data/config.toml | sed 's/[[:space:]]*#.*$//')"
+
 leaked=0
-for pattern in 'sk-ant-' 'xoxb-' 'xapp-' 'ghp_' 'api_key' 'bot_token' 'app_token' 'paired_tokens' 'secret ='; do
-  if grep -qi -- "$pattern" <<<"$rendered"; then
-    fail "rendered config contains '$pattern'"
+# A credential field assigned a non-empty value, in any form TOML allows.
+for field in api_key bot_token app_token paired_tokens secret; do
+  if grep -qE "^[[:space:]]*${field}[[:space:]]*=[[:space:]]*[\"\[][^\"]" <<<"$rendered"; then
+    fail "rendered config assigns a value to '$field'"
     leaked=1
   fi
 done
-[ "$leaked" -eq 0 ] && pass "rendered config on the PVC contains no credential fields"
+# ...and no credential-shaped literal anywhere, assigned or not.
+for pattern in 'sk-ant-[A-Za-z0-9_-]{8,}' 'xox[baprs]-[A-Za-z0-9-]{8,}' 'xai-[A-Za-z0-9]{8,}' 'ghp_[A-Za-z0-9]{8,}'; do
+  if grep -qE -- "$pattern" <<<"$rendered"; then
+    fail "rendered config contains a literal matching /$pattern/"
+    leaked=1
+  fi
+done
+[ "$leaked" -eq 0 ] && pass "rendered config on the PVC assigns no credential value"
+
+# The stronger claim: nothing anywhere on the volume, not just in the config.
+if in_agent sh -c 'grep -rlE "sk-ant-[A-Za-z0-9_-]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|xai-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}" /data 2>/dev/null | head -1' | grep -q .; then
+  fail "a credential-shaped literal exists somewhere on the PVC"
+else
+  pass "no credential-shaped literal anywhere on the PVC"
+fi
 
 # shellcheck disable=SC2016  # $(...) must be evaluated inside the container, not here
 if in_agent sh -c 'test "$(stat -c %a /data/config.toml)" = 600'; then

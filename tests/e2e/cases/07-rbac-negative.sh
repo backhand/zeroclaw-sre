@@ -10,62 +10,64 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 say "07 — RBAC forbids everything it should"
 
-# denied <description> <kubectl args...>
-denied() {
+# `kubectl auth can-i` asks the API server the authorization question directly
+# and answers exactly "yes" or "no". Attempting the real verb instead is a
+# worse test: `delete --all` on an empty namespace prints "No resources found"
+# and never reaches an authorization decision, which reads as "not denied".
+#
+# stderr is dropped because cluster-scoped resources emit a "not namespace
+# scoped" warning that would otherwise be mistaken for the answer.
+can_i() {   # can_i <args...> -> prints yes|no
+  k exec deploy/zeroclaw-sre -c zeroclaw -- \
+    sh -c "kubectl auth can-i $* 2>/dev/null | tail -1" | tr -d '\r'
+}
+
+denied() {   # denied <description> <auth can-i args...>
   local desc="$1"; shift
-  local out
-  out="$(k exec deploy/zeroclaw-sre -c zeroclaw -- kubectl "$@" 2>&1 || true)"
-  if grep -qiE 'forbidden|cannot|not allowed|Unauthorized' <<<"$out"; then
+  local ans; ans="$(can_i "$@")"
+  if [ "$ans" = "no" ]; then
     pass "$desc is denied"
   else
-    fail "$desc was NOT denied: $(head -c 200 <<<"$out")"
+    fail "$desc was NOT denied (kubectl auth can-i $* -> ${ans:-<empty>})"
   fi
 }
 
-allowed() {
+allowed() {   # allowed <description> <auth can-i args...>
   local desc="$1"; shift
-  if k exec deploy/zeroclaw-sre -c zeroclaw -- kubectl "$@" >/dev/null 2>&1; then
+  local ans; ans="$(can_i "$@")"
+  if [ "$ans" = "yes" ]; then
     pass "$desc is allowed"
   else
-    fail "$desc should be allowed but was denied"
+    fail "$desc should be allowed (kubectl auth can-i $* -> ${ans:-<empty>})"
   fi
 }
 
 # The verbs that would let a compromised prompt do real damage.
-denied "deleting a pod"            delete pod -n kube-system --all --dry-run=server
-denied "reading a secret"          get secret -n kube-system -o name
-denied "listing secrets anywhere"  get secrets --all-namespaces -o name
-denied "creating a workload"       create deployment evil --image=busybox -n default --dry-run=server
-denied "deleting a deployment"     delete deployment -n default --all --dry-run=server
-denied "draining a node"           auth can-i update nodes
-denied "scaling a deployment"      auth can-i update deployments.apps
-denied "editing RBAC"              auth can-i create clusterrolebindings
-denied "reading configmaps"        get configmap -n kube-system -o name
+denied "deleting a pod"            delete pods -n kube-system
+denied "deleting a pod anywhere"   delete pods --all-namespaces
+denied "reading a secret"          get secrets -n kube-system
+denied "listing secrets anywhere"  list secrets --all-namespaces
+denied "creating a workload"       create deployments.apps -n default
+denied "deleting a deployment"     delete deployments.apps -n default
+denied "evicting/draining a node"  update nodes
+denied "scaling a deployment"      update deployments.apps -n default
+denied "editing RBAC"              create clusterrolebindings.rbac.authorization.k8s.io
+denied "reading configmaps"        get configmaps -n kube-system
+denied "port-forwarding into a pod" create pods/portforward -n kube-system
+denied "exec-ing into a pod"       create pods/exec -n kube-system
 
 # ...and the reads the playbook genuinely needs.
-allowed "listing pods cluster-wide"     get pods --all-namespaces -o name
-allowed "reading pod logs"              auth can-i get pods/log --all-namespaces
-allowed "listing events"                get events --all-namespaces -o name
-allowed "listing nodes"                 get nodes -o name
-allowed "listing deployments"           get deployments --all-namespaces -o name
-allowed "reading metrics"               auth can-i list pods.metrics.k8s.io
+allowed "listing pods cluster-wide"     list pods --all-namespaces
+allowed "reading pod logs"              get pods/log --all-namespaces
+allowed "listing events"                list events --all-namespaces
+allowed "listing nodes"                 list nodes
+allowed "listing deployments"           list deployments.apps --all-namespaces
+allowed "reading metrics"               list pods.metrics.k8s.io --all-namespaces
 
 # Patch: permitted only where a RoleBinding exists.
-out="$(k exec deploy/zeroclaw-sre -c zeroclaw -- \
-  kubectl auth can-i patch deployments.apps -n "$E2E_APP_NS" 2>&1 || true)"
-if grep -q '^yes' <<<"$out"; then
-  pass "patching workloads is allowed in the bound namespace"
-else
-  fail "patch should be allowed in $E2E_APP_NS (RoleBinding missing?): $out"
-fi
-
-out="$(k exec deploy/zeroclaw-sre -c zeroclaw -- \
-  kubectl auth can-i patch deployments.apps -n kube-system 2>&1 || true)"
-if grep -q '^no' <<<"$out"; then
-  pass "patching workloads is denied outside bound namespaces"
-else
-  fail "patch is allowed in kube-system — the write ClusterRole is bound too widely"
-fi
+allowed "patching workloads in the bound namespace" patch deployments.apps -n "$E2E_APP_NS"
+denied  "patching workloads in kube-system"           patch deployments.apps -n kube-system
+denied  "patching workloads in default"               patch deployments.apps -n default
 
 # The agent must not be able to read its own mounted token through a file tool.
 out="$(k exec deploy/zeroclaw-sre -c zeroclaw -- \
