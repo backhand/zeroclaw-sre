@@ -86,6 +86,10 @@ auto_approve = [
   "sop_status", "sop_advance", "sop_list", "sop_execute",
   # talking to humans, which is the entire point
   "send_via", "ask_user", "escalate_to_human", "reaction", "poll",
+  # GitHub. Gating this protected nothing once `shell` was auto-approved and
+  # `gh` is an allowed command — the agent could already do anything the token
+  # permits. The real control on GitHub reach is GH_TOKEN's own scopes.
+  "git_forge",
 ]
 # Writing files in the workspace is never part of the job; if the model wants
 # to, a human should see why.
