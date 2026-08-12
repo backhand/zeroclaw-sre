@@ -394,7 +394,8 @@ make e2e           # k3d acceptance suite (needs k3d)
 ```
 
 `make e2e` runs everything it can without credentials and **skips** — never
-fakes — the cases that need a real model call. Supply `ANTHROPIC_API_KEY` (and
+fakes — the cases that need a real model call. It is green in CI: 62 assertions
+covering boot, alert auth, the RBAC matrix, persistence and the MCP executor. Supply `ANTHROPIC_API_KEY` (and
 `GH_TOKEN` + `E2E_GH_REPO` for the ticket-dedupe case) to run the full set.
 `KEEP_CLUSTER=1` leaves the cluster up for debugging.
 

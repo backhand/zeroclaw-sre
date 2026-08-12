@@ -340,12 +340,19 @@ Stated plainly, because the difference matters:
 
 Sections 11–13 above are the four defects that run exposed.
 
-**Still not executed**
+**The k3d acceptance suite now runs green in CI** — 62 assertions, 0 failures,
+across boot, the alert-auth boundary, the full RBAC matrix, persistence across a
+pod delete, and the MCP executor. Five cases skip loudly rather than faking
+themselves: four need a real model call (`ANTHROPIC_API_KEY`) and one needs a
+throwaway GitHub repo (`GH_TOKEN` + `E2E_GH_REPO`). Supply those secrets and the
+suite covers the model-dependent behaviour too.
 
-- **the k3d acceptance suite** (`tests/e2e/`). `k3d` is not installed on the
-  build host, so the suite is written and lint-clean but has never been run as
-  a suite. CI runs it on every push; the first green run there is the real
-  signal.
+Case 09 deliberately drives the executor over stdio instead of through the
+agent. Those assertions have to hold regardless of what a model decides, so
+putting an LLM in the path would make them slower, costlier and
+non-deterministic while testing strictly less.
+
+**Still not executed**
 - **Slack and Discord delivery.** Verified only that the configured bot token
   authenticates (`auth.test`) and carries the scopes the README lists. Nothing
   has been posted to a real channel: Socket Mode also needs an app-level token
