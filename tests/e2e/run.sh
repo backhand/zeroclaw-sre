@@ -73,6 +73,17 @@ kubectl apply -f "$REPO_ROOT/deploy/namespace.yaml"
 kubectl apply -f "$REPO_ROOT/deploy/rbac.yaml"
 kubectl apply -f "$E2E_ROOT/manifests/chat-sink.yaml"
 kubectl apply -f "$E2E_ROOT/manifests/broken-workload.yaml"   # creates the e2e-apps namespace
+kubectl apply -f "$E2E_ROOT/manifests/rollout-history.yaml"
+
+# Roll it a few times so there are superseded ReplicaSets for case 09 to prune.
+# A single apply leaves one current ReplicaSet and nothing prunable.
+info "creating rollout history for the prune tests"
+for i in 1 2 3 4 5; do
+  kubectl -n "$E2E_APP_NS" patch deployment rolled --type merge \
+    -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"e2e-revision\":\"$i\"}}}}}" >/dev/null
+  sleep 2
+done
+kubectl -n "$E2E_APP_NS" rollout status deployment/rolled --timeout=120s >/dev/null 2>&1 || true
 
 # Write RoleBinding for the test namespace, so case 07 can prove the boundary
 # is per-namespace rather than absent.

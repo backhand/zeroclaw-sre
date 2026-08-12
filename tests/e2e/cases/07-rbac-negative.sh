@@ -64,6 +64,14 @@ allowed "listing nodes"                 list nodes
 allowed "listing deployments"           list deployments.apps --all-namespaces
 allowed "reading metrics"               list pods.metrics.k8s.io --all-namespaces
 
+# Delete on replicasets is the one destructive verb, and it is bound per
+# namespace exactly like patch.
+allowed "deleting replicasets in the bound namespace" delete replicasets.apps -n "$E2E_APP_NS"
+denied  "deleting replicasets in kube-system"        delete replicasets.apps -n kube-system
+denied  "deleting replicasets in default"            delete replicasets.apps -n default
+denied  "deleting pods even where prune is bound"    delete pods -n "$E2E_APP_NS"
+denied  "deleting deployments where prune is bound"  delete deployments.apps -n "$E2E_APP_NS"
+
 # Patch: permitted only where a RoleBinding exists.
 allowed "patching workloads in the bound namespace" patch deployments.apps -n "$E2E_APP_NS"
 denied  "patching workloads in kube-system"           patch deployments.apps -n kube-system

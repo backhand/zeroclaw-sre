@@ -7,6 +7,11 @@
 # This needs a throwaway GitHub repo: set GH_TOKEN and E2E_GH_REPO. Without
 # them the case is skipped rather than faked — a dedupe test against a mock
 # proves nothing about `gh issue list --search`.
+#
+# The agent files through the k8s__file_issue MCP tool, not `gh`: its shell has
+# no GitHub credential at all. The assertions below still use `gh` because the
+# *harness* has its own token, and checking the result through a different path
+# than the one that wrote it is the stronger test.
 set -euo pipefail
 # shellcheck source=../lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"

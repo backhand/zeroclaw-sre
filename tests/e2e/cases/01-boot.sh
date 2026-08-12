@@ -100,4 +100,18 @@ else
   fail "workspace payload missing after boot"
 fi
 
+# The executor binary must be present and the shell must have no GitHub
+# credential — that pairing is the whole custody argument.
+if in_agent test -x /usr/local/bin/mcp-executor; then
+  pass "the MCP executor is installed"
+else
+  fail "/usr/local/bin/mcp-executor is missing"
+fi
+
+if in_agent sh -c 'grep -A12 shell_env_passthrough /data/config.toml | grep -q "\"GH_TOKEN\""'; then
+  fail "GH_TOKEN is still in shell_env_passthrough — the shell can reach GitHub directly"
+else
+  pass "GH_TOKEN is not passed to the shell (only the executor holds it)"
+fi
+
 summary
