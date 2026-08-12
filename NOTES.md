@@ -712,6 +712,39 @@ The gate belongs on the capability, not on a procedure the model narrates.
 
 ---
 
+## 23. Declaring an MCP server is not granting it
+
+The executor was configured, spawnable, its binary present, its handshake
+verified by hand — and completely invisible to the agent, which reported
+`k8s__file_issue` simply not being in its tool list.
+
+Agents receive only the MCP servers named by their `mcp_bundles`, exactly as
+they receive only the skills named by their `skill_bundles`. From the schema:
+
+> Secure by default: an agent is granted only the servers named by its bundles.
+> **An agent with no `mcp_bundles` receives no MCP servers (omission is not a
+> grant.)**
+
+So `[mcp.servers]` declares a server; `[mcp_bundles.<alias>]` plus
+`agents.<alias>.mcp_bundles` grants it. Both are required.
+
+Two lessons, the second more expensive than the first:
+
+1. The indirection was already visible in `skill_bundles`, which this config
+   uses. A pattern that appears twice in one schema is worth checking for.
+2. `GH_TOKEN` had already been removed from `shell_env_passthrough` in the same
+   change — so the fallback was gone before the replacement was proven
+   reachable, turning "the new capability is not wired yet" into "ticket filing
+   has no path at all". Remove a fallback only after the thing replacing it has
+   been exercised end to end.
+
+Also raised `max_actions_per_hour` to 400 in the runtime profile. The default
+stopped the agent mid-investigation with "further tool calls are rejected",
+which reads as a bug and discards the work in progress. One investigation is
+many reads by design; a sweep does that per finding.
+
+---
+
 ## 10. Open questions for the operator
 
 1. **kubectl skew.** Pinned to `v1.36.3` to match current stable k3s
